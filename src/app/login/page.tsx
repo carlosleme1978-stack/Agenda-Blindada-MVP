@@ -14,13 +14,13 @@ export default function Login() {
   const cardStyle = useMemo(
     () => ({
       width: "100%",
-      maxWidth: 440,
-      background: "rgba(255,255,255,0.78)",
-      border: "1px solid rgba(0,0,0,0.06)",
-      borderRadius: 18,
+      maxWidth: 460,
+      background: "rgba(255,255,255,0.82)",
+      border: "1px solid rgba(2,6,23,0.08)",
+      borderRadius: 20,
       boxShadow:
-        "0 30px 60px rgba(15, 23, 42, 0.10), 0 8px 18px rgba(15, 23, 42, 0.06)",
-      padding: 22,
+        "0 40px 80px rgba(2,6,23,0.12), 0 10px 24px rgba(2,6,23,0.08)",
+      padding: 24,
     }),
     []
   );
@@ -32,7 +32,7 @@ export default function Login() {
     border: "1px solid rgba(2, 6, 23, 0.12)",
     outline: "none",
     fontSize: 14,
-    background: "rgba(255,255,255,0.9)",
+    background: "rgba(255,255,255,0.95)",
   } as const;
 
   const buttonStyle = {
@@ -41,12 +41,12 @@ export default function Login() {
     borderRadius: 12,
     border: "1px solid rgba(2, 6, 23, 0.10)",
     cursor: "pointer",
-    fontWeight: 700,
+    fontWeight: 800,
     letterSpacing: -0.2,
     color: "white",
     background:
-      "linear-gradient(135deg, rgba(17,94,89,1), rgba(59,130,246,1))",
-    boxShadow: "0 14px 26px rgba(59,130,246,0.25)",
+      "linear-gradient(135deg, rgba(15, 23, 42, 1), rgba(59,130,246,1))",
+    boxShadow: "0 16px 30px rgba(59,130,246,0.22)",
   } as const;
 
   async function onSubmit(e: React.FormEvent) {
@@ -69,92 +69,171 @@ export default function Login() {
         minHeight: "calc(100vh - 40px)",
         display: "grid",
         placeItems: "center",
-        padding: "18px 0",
+        padding: "20px 0",
       }}
     >
-      <div style={cardStyle}>
-        <div style={{ marginBottom: 14 }}>
+      <div style={{ width: "100%", maxWidth: 980, padding: "0 18px" }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1.1fr 0.9fr",
+            gap: 18,
+            alignItems: "stretch",
+          }}
+        >
+          {/* Left: Brand / value */}
           <div
             style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "8px 10px",
-              borderRadius: 999,
-              background: "rgba(15, 23, 42, 0.04)",
+              borderRadius: 22,
+              padding: 28,
               border: "1px solid rgba(2,6,23,0.06)",
-              fontSize: 12,
+              background:
+                "linear-gradient(135deg, rgba(15,23,42,0.92), rgba(2,132,199,0.88))",
+              color: "rgba(255,255,255,0.95)",
+              boxShadow:
+                "0 40px 80px rgba(2,6,23,0.12), 0 12px 26px rgba(2,6,23,0.10)",
             }}
           >
-            <span
-              aria-hidden
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div
+                aria-hidden
+                style={{
+                  width: 12,
+                  height: 12,
+                  borderRadius: 999,
+                  background:
+                    "linear-gradient(135deg, rgba(16,185,129,1), rgba(59,130,246,1))",
+                  boxShadow: "0 10px 18px rgba(59,130,246,0.28)",
+                }}
+              />
+              <strong style={{ letterSpacing: -0.2 }}>
+                {process.env.NEXT_PUBLIC_APP_NAME ?? "Agenda Blindada"}
+              </strong>
+            </div>
+
+            <h1
               style={{
-                width: 9,
-                height: 9,
-                borderRadius: 999,
-                background:
-                  "linear-gradient(135deg, rgba(17,94,89,1), rgba(59,130,246,1))",
-                boxShadow: "0 8px 18px rgba(59,130,246,0.35)",
-              }}
-            />
-            <strong style={{ letterSpacing: -0.2 }}>
-              {process.env.NEXT_PUBLIC_APP_NAME ?? "Agenda Blindada"}
-            </strong>
-          </div>
-
-          <h1 style={{ margin: "14px 0 6px", fontSize: 26, letterSpacing: -0.6 }}>
-            Entrar no painel
-          </h1>
-          <p style={{ margin: 0, opacity: 0.7, fontSize: 14 }}>
-            Acesse sua agenda e confirme marcações via WhatsApp.
-          </p>
-        </div>
-
-        <form onSubmit={onSubmit}>
-          <label style={{ fontSize: 13, fontWeight: 600 }}>Email</label>
-          <input
-            style={{ ...inputStyle, marginTop: 6 }}
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="seu@email.com"
-            autoComplete="email"
-          />
-
-          <div style={{ height: 12 }} />
-
-          <label style={{ fontSize: 13, fontWeight: 600 }}>Password</label>
-          <input
-            type="password"
-            style={{ ...inputStyle, marginTop: 6 }}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-            autoComplete="current-password"
-          />
-
-          <div style={{ height: 14 }} />
-
-          <button style={buttonStyle} disabled={loading}>
-            {loading ? "A entrar..." : "Entrar"}
-          </button>
-
-          {msg && (
-            <p
-              style={{
-                marginTop: 12,
-                marginBottom: 0,
-                color: "#b91c1c",
-                background: "rgba(185, 28, 28, 0.07)",
-                border: "1px solid rgba(185, 28, 28, 0.18)",
-                padding: "10px 12px",
-                borderRadius: 12,
-                fontSize: 13,
+                margin: "18px 0 10px",
+                fontSize: 34,
+                lineHeight: 1.05,
+                letterSpacing: -1.0,
               }}
             >
-              {msg}
+              Acesso ao painel
+            </h1>
+
+            <p style={{ margin: 0, opacity: 0.85, fontSize: 14, lineHeight: 1.6 }}>
+              Gerencie sua agenda e confirmações via WhatsApp com um fluxo simples e
+              seguro. Sem conflitos de horário e com rastreabilidade no sistema.
             </p>
-          )}
-        </form>
+
+            <div style={{ height: 14 }} />
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                gap: 10,
+                marginTop: 14,
+              }}
+            >
+              {[
+                { t: "Confirmação", s: "SIM / NÃO" },
+                { t: "Agenda", s: "Sem sobreposição" },
+                { t: "Controle", s: "Logs & status" },
+              ].map((b) => (
+                <div
+                  key={b.t}
+                  style={{
+                    borderRadius: 16,
+                    border: "1px solid rgba(255,255,255,0.14)",
+                    background: "rgba(255,255,255,0.08)",
+                    padding: 12,
+                  }}
+                >
+                  <div style={{ fontWeight: 900, letterSpacing: -0.2 }}>{b.t}</div>
+                  <div style={{ opacity: 0.85, fontSize: 12 }}>{b.s}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Right: Login form */}
+          <div style={cardStyle}>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 800 }}>
+                Entrar
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: -0.4 }}>
+                Faça login para continuar
+              </div>
+              <div style={{ marginTop: 6, fontSize: 13, opacity: 0.7 }}>
+                Use as credenciais fornecidas para acessar o painel.
+              </div>
+            </div>
+
+            <form onSubmit={onSubmit}>
+              <label style={{ fontSize: 13, fontWeight: 800 }}>Email</label>
+              <input
+                style={{ ...inputStyle, marginTop: 6 }}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="seu@email.com"
+                autoComplete="email"
+              />
+
+              <div style={{ height: 12 }} />
+
+              <label style={{ fontSize: 13, fontWeight: 800 }}>Password</label>
+              <input
+                type="password"
+                style={{ ...inputStyle, marginTop: 6 }}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+              />
+
+              <div style={{ height: 14 }} />
+
+              <button style={{ ...buttonStyle, opacity: loading ? 0.85 : 1 }} disabled={loading}>
+                {loading ? "A entrar..." : "Entrar"}
+              </button>
+
+              {msg && (
+                <p
+                  style={{
+                    marginTop: 12,
+                    marginBottom: 0,
+                    color: "#b91c1c",
+                    background: "rgba(185, 28, 28, 0.07)",
+                    border: "1px solid rgba(185, 28, 28, 0.18)",
+                    padding: "10px 12px",
+                    borderRadius: 12,
+                    fontSize: 13,
+                  }}
+                >
+                  {msg}
+                </p>
+              )}
+            </form>
+
+            <div style={{ marginTop: 14, fontSize: 12, opacity: 0.65, lineHeight: 1.5 }}>
+              Ao acessar, você concorda com as políticas internas de uso do sistema.
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            marginTop: 14,
+            textAlign: "center",
+            fontSize: 12,
+            opacity: 0.65,
+          }}
+        >
+          © {new Date().getFullYear()} {process.env.NEXT_PUBLIC_APP_NAME ?? "Agenda Blindada"}.
+        </div>
       </div>
     </main>
   );
