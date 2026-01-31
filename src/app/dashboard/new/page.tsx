@@ -1,10 +1,14 @@
 "use client";
-import React, { useMemo, useState } from "react";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+import React, { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { useRouter } from "next/navigation";
 
 export default function New() {
-  const sb = useMemo(() => supabaseBrowser(), []);
+  const [sb, setSb] = useState<ReturnType<typeof supabaseBrowser> | null>(null);
   const r = useRouter();
 
   const [phone, setPhone] = useState("+351");
@@ -13,9 +17,16 @@ export default function New() {
   const [minutes, setMinutes] = useState(30);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // cria o client só no browser (evita crash no prerender)
+  useEffect(() => {
+    setSb(supabaseBrowser());
+  }, []);
+
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setMsg(null);
+
+    if (!sb) return setMsg("A iniciar… tenta novamente.");
 
     const { data: sess } = await sb.auth.getSession();
     const token = sess.session?.access_token;
@@ -23,7 +34,10 @@ export default function New() {
 
     const res = await fetch("/api/appointments/create", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify({
         customerPhone: phone,
         customerName: name,
