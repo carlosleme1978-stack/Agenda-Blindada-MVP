@@ -1,0 +1,26 @@
+{
+  "name": "agenda-blindada-saas-mvp",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "reminders:24h": "node --loader ts-node/esm scripts/send_reminders_24h.ts",
+    "thanks": "node --loader ts-node/esm scripts/send_thank_you.ts",
+    "rebook": "node --loader ts-node/esm scripts/send_rebook.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "next": "^14.2.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/react": "19.2.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3"
+  }
+}
