@@ -1,13 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
-/**
- * Meta Webhook Verification (GET)
- * Meta vai chamar com:
- * ?hub.mode=subscribe&hub.verify_token=...&hub.challenge=...
- *
- * Deve responder 200 com o challenge em TEXTO PURO.
- */
 export async function GET(req: NextRequest) {
   const searchParams = req.nextUrl.searchParams;
 
@@ -32,22 +25,31 @@ export async function POST(req: NextRequest) {
   const entry = body.entry?.[0];
   const change = entry?.changes?.[0];
   const value = change?.value;
-
   const message = value?.messages?.[0];
-  if (!message?.text?.body) {
+
+  if (!message?.text?.body || !message?.from) {
     return NextResponse.json({ ok: true });
   }
 
-  const from = message.from; // telefone sem +
+  const from = message.from;
   const text = message.text.body.trim().toUpperCase();
 
+  const db = supabaseAdmin();
+
+  // ✅ grava TODO inbound
+  await db.from("message_log").insert({
+    direction: "inbound",
+    customer_phone: from,
+    body: text,
+    meta: { raw: message },
+  });
+
+  // só processa SIM / NÃO
   if (text !== "SIM" && text !== "NÃO") {
     return NextResponse.json({ ok: true });
   }
 
-  const db = supabaseAdmin();
-
-  // última marcação BOOKED desse telefone
+  // ⚠️ ainda não filtra por telefone (corrigimos no próximo passo)
   const { data: appt } = await db
     .from("appointments")
     .select("id,status")
@@ -64,13 +66,5 @@ export async function POST(req: NextRequest) {
 
   await db.from("appointments").update({ status: newStatus }).eq("id", appt.id);
 
-  await db.from("message_log").insert({
-    direction: "inbound",
-    customer_phone: from,
-    body: text,
-    meta: { appointment_id: appt.id },
-  });
-
   return NextResponse.json({ ok: true });
 }
-
