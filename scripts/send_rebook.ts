@@ -1,4 +1,4 @@
-import { adminClient, sendWhatsApp } from "./_common.ts";
+import { adminClient, sendWhatsApp } from "./_common";
 (async()=>{
   const db=adminClient();
   const days=28;
