@@ -144,9 +144,10 @@ export async function POST(req: NextRequest) {
     if (!company) return new Response("OK", { status: 200 });
 
     // Determine which prices failed
-    const failedPrices = invoice.lines.data.map(
-      (l) => l.price?.lookup_key
-    );
+    const failedPrices = invoice.lines.data
+  .map((l: any) => l.price?.lookup_key)
+  .filter(Boolean);
+
 
     if (failedPrices.includes("basic_monthly_19")) {
       // BASIC failed -> block everything
@@ -170,7 +171,9 @@ export async function POST(req: NextRequest) {
 
     if (!company) return new Response("OK", { status: 200 });
 
-    const prices = sub.items.data.map((i) => i.price.lookup_key);
+const prices = sub.items.data
+  .map((i: any) => i.price?.lookup_key)
+  .filter(Boolean);
 
     if (prices.includes("basic_monthly_19")) {
       await blockAll(company.id);
