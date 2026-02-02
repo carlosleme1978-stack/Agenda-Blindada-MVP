@@ -1,5 +1,10 @@
+import "server-only";
 import { createClient } from "@supabase/supabase-js";
-import { must } from "@/lib/env";
-export function supabaseAdmin(){
-  return createClient(must("NEXT_PUBLIC_SUPABASE_URL"), must("SUPABASE_SERVICE_ROLE_KEY"), {auth:{persistSession:false}});
+
+export function adminClient() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } }
+  );
 }
