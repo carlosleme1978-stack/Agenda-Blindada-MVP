@@ -8,3 +8,11 @@ export function adminClient() {
     { auth: { persistSession: false } }
   );
 }
+
+/**
+ * Alias para compatibilidade com o código existente:
+ * requirePro.ts e rotas /api/* importam supabaseAdmin
+ */
+export function supabaseAdmin() {
+  return adminClient();
+}
