@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { ensureAccess } from "@/lib/access";
 
 export default function NewClient() {
   const r = useRouter();
@@ -14,6 +15,14 @@ export default function NewClient() {
   const [minutes, setMinutes] = useState(30);
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    // Protect route: requires active subscription + onboarding complete.
+    (async () => {
+      const sb = supabaseBrowser();
+      await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
+    })();
+  }, []);
 
   const card = useMemo(
     () => ({
@@ -45,6 +54,10 @@ export default function NewClient() {
 
     try {
       const sb = supabaseBrowser();
+
+      // Route gate: must be active + onboarded.
+      const access = await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
+      if (!access.ok) return;
 
       const { data: sess } = await sb.auth.getSession();
       const token = sess.session?.access_token;

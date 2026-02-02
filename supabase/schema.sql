@@ -5,11 +5,20 @@ create table if not exists public.companies (
   name text not null,
   timezone text not null default 'Europe/Lisbon',
   whatsapp_phone_number_id text null,
+  -- SaaS fields (used by the app)
+  plan text not null default 'basic',
+  staff_limit int not null default 1,
+  sub_basic_status text not null default 'inactive',
+  sub_pro_status text not null default 'inactive',
+  -- Onboarding fields (V1)
+  onboarding_complete boolean not null default false,
+  default_duration_minutes int not null default 30,
   created_at timestamptz not null default now()
 );
 
+-- NOTE: In this app, profiles.id == auth.users.id
 create table if not exists public.profiles (
-  user_id uuid primary key references auth.users(id) on delete cascade,
+  id uuid primary key references auth.users(id) on delete cascade,
   company_id uuid not null references public.companies(id) on delete cascade,
   role text not null default 'owner',
   created_at timestamptz not null default now()
@@ -82,13 +91,17 @@ alter table public.message_log enable row level security;
 create or replace function public.current_company_id()
 returns uuid
 language sql stable
-as $$ select company_id from public.profiles where user_id = auth.uid(); $$;
+as $$ select company_id from public.profiles where id = auth.uid(); $$;
 
 create policy "company_select" on public.companies
 for select using (id = public.current_company_id());
 
+-- Allow the owner to update minimal company fields (onboarding, name, defaults)
+create policy "company_update" on public.companies
+for update using (id = public.current_company_id()) with check (id = public.current_company_id());
+
 create policy "profiles_self" on public.profiles
-for select using (user_id = auth.uid());
+for select using (id = auth.uid());
 
 create policy "customers_rw" on public.customers
 for all using (company_id = public.current_company_id()) with check (company_id = public.current_company_id());

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import Link from "next/link";
+import { ensureAccess } from "@/lib/access";
 
 type Row = {
   id: string;
@@ -52,15 +53,20 @@ export default function DashboardClient() {
   const [rows, setRows] = useState<Row[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [gateOk, setGateOk] = useState(false);
 
   async function load() {
     setLoading(true);
     try {
+      // Access gate (client-side): login → billing if inactive → onboarding if needed.
+      const access = await ensureAccess(sb, {
+        requireActiveSubscription: true,
+        requireOnboardingComplete: true,
+      });
+      if (!access.ok) return;
+
       const { data: sess } = await sb.auth.getSession();
-      if (!sess.session) {
-        setMsg("Sem sessão.");
-        return;
-      }
+      if (!sess.session) return;
       const { data, error } = await sb
         .from("v_appointments_dashboard")
         .select("*")
@@ -75,7 +81,16 @@ export default function DashboardClient() {
   }
 
   useEffect(() => {
-    load();
+    (async () => {
+      // Gate: requires active subscription + onboarding complete.
+      const res = await ensureAccess(sb, {
+        requireActiveSubscription: true,
+        requireOnboardingComplete: true,
+      });
+      if (!res.ok) return;
+      setGateOk(true);
+      load();
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -107,6 +122,22 @@ export default function DashboardClient() {
       }}
     >
       <main style={{ maxWidth: 1100, margin: "0 auto" }}>
+
+      {!gateOk ? (
+        <div
+          style={{
+            background: "rgba(255,255,255,0.82)",
+            border: "1px solid rgba(0,0,0,0.06)",
+            borderRadius: 20,
+            padding: 18,
+            boxShadow:
+              "0 30px 60px rgba(15, 23, 42, 0.08), 0 8px 18px rgba(15, 23, 42, 0.05)",
+          }}
+        >
+          Verificando acesso…
+        </div>
+      ) : (
+      <>
 
       <div
         style={{
@@ -341,6 +372,9 @@ export default function DashboardClient() {
           </table>
         </div>
       </div>
+      </>
+      )}
+
       </main>
     </div>
   );
