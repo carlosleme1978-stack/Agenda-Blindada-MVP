@@ -90,15 +90,24 @@ export default function DashboardClient() {
   const cancelled = rows.filter((r) => r.status === "CANCELLED").length;
 
   const card: React.CSSProperties = {
-    background: "rgba(255,255,255,0.78)",
+    background: "rgba(255,255,255,0.82)",
     border: "1px solid rgba(0,0,0,0.06)",
-    borderRadius: 18,
+    borderRadius: 20,
     boxShadow:
-      "0 26px 48px rgba(15, 23, 42, 0.08), 0 8px 18px rgba(15, 23, 42, 0.05)",
+      "0 30px 60px rgba(15, 23, 42, 0.08), 0 8px 18px rgba(15, 23, 42, 0.05)",
   };
 
   return (
-    <main>
+    <div
+      style={{
+        minHeight: "100vh",
+        background:
+          "radial-gradient(1200px 800px at 20% 20%, rgba(99,102,241,0.22), transparent 60%), radial-gradient(900px 700px at 80% 30%, rgba(236,72,153,0.14), transparent 55%), radial-gradient(900px 700px at 55% 85%, rgba(16,185,129,0.12), transparent 55%), linear-gradient(180deg, #f8fafc 0%, #eef2ff 60%, #ecfeff 100%)",
+        padding: 24,
+      }}
+    >
+      <main style={{ maxWidth: 1100, margin: "0 auto" }}>
+
       <div
         style={{
           display: "flex",
@@ -132,6 +141,21 @@ export default function DashboardClient() {
             }}
           >
             + Nova marcação
+          </Link>
+          <Link
+            href="/dashboard/billing"
+            style={{
+              textDecoration: "none",
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid rgba(2,6,23,0.10)",
+              background: "rgba(255,255,255,0.85)",
+              color: "#0f172a",
+              fontWeight: 700,
+              fontSize: 13,
+            }}
+          >
+            Faturação
           </Link>
           <button
             onClick={logout}
@@ -317,6 +341,7 @@ export default function DashboardClient() {
           </table>
         </div>
       </div>
-    </main>
+      </main>
+    </div>
   );
 }
