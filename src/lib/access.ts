@@ -37,12 +37,31 @@ export async function getCompanyForCurrentUser(sb: SupabaseClient): Promise<Acce
 
   const userId = sess.session.user.id;
 
-  // NOTE: this project expects profiles.id = auth.users.id.
-  const { data: prof, error: perr } = await sb
-    .from("profiles")
-    .select("company_id")
-    .eq("id", userId)
-    .single();
+  // NOTE: Some DBs use profiles.id = auth.users.id (schema.sql), others use profiles.uid.
+  // We try a few common keys to be compatible with older installs.
+  let prof: any = null;
+  let perr: any = null;
+
+  // 1) New schema (recommended): profiles.id
+  {
+    const r = await sb.from("profiles").select("company_id").eq("id", userId).maybeSingle();
+    prof = r.data;
+    perr = r.error;
+  }
+
+  // 2) Older schema: profiles.uid
+  if ((perr && /column\s+\"id\"\s+does not exist/i.test(perr.message)) || (!prof?.company_id && !perr)) {
+    const r = await sb.from("profiles").select("company_id").eq("uid", userId).maybeSingle();
+    prof = r.data;
+    perr = r.error;
+  }
+
+  // 3) Another variant: profiles.user_id
+  if ((perr && /column\s+\"uid\"\s+does not exist/i.test(perr.message)) || (!prof?.company_id && !perr)) {
+    const r = await sb.from("profiles").select("company_id").eq("user_id", userId).maybeSingle();
+    prof = r.data;
+    perr = r.error;
+  }
 
   if (perr || !prof?.company_id) return { ok: false, reason: "NO_PROFILE" };
 

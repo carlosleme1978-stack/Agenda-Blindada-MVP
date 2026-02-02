@@ -63,11 +63,29 @@ export async function POST(req: Request) {
     // ─────────────────────────────────────────────
     // Company do user
     // ─────────────────────────────────────────────
-    const { data: profile } = await db
-      .from("profiles")
-      .select("company_id")
-      .eq("user_id", u.user.id)
-      .maybeSingle();
+    // profiles key varies across installs (id in schema.sql, uid/user_id in older DBs)
+    let profile: any = null;
+    {
+      const r = await db.from("profiles").select("company_id").eq("id", u.user.id).maybeSingle();
+      profile = r.data;
+      if (r.error && /column\s+\"id\"\s+does not exist/i.test(r.error.message)) {
+        // ignore, try next
+        profile = null;
+      }
+    }
+
+    if (!profile?.company_id) {
+      const r = await db.from("profiles").select("company_id").eq("uid", u.user.id).maybeSingle();
+      profile = r.data;
+      if (r.error && /column\s+\"uid\"\s+does not exist/i.test(r.error.message)) {
+        profile = null;
+      }
+    }
+
+    if (!profile?.company_id) {
+      const r = await db.from("profiles").select("company_id").eq("user_id", u.user.id).maybeSingle();
+      profile = r.data;
+    }
 
     if (!profile?.company_id) {
       return new NextResponse("User sem company", { status: 400 });

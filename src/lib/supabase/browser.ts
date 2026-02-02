@@ -6,3 +6,8 @@ export function browserClient() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 }
+
+// Compatível com o projeto: supabaseBrowser() retorna um client
+export function supabaseBrowser() {
+  return browserClient();
+}

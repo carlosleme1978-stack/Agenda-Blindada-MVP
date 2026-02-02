@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import Link from "next/link";
+import { getCompanyForCurrentUser } from "@/lib/access";
 
 type Company = {
   id: string;
@@ -65,38 +66,12 @@ export default function BillingPage() {
     setLoading(true);
     setMsg(null);
     try {
-      const sess = await sb.auth.getSession();
-      if (!sess.data.session) {
+      const res = await getCompanyForCurrentUser(sb);
+      if (!res.ok) {
         location.href = "/login";
         return;
       }
-
-      const userId = sess.data.session.user.id;
-
-      // profiles has company_id
-      const { data: prof, error: perr } = await sb
-        .from("profiles")
-        .select("company_id")
-        .eq("id", userId)
-        .single();
-
-      if (perr || !prof?.company_id) {
-        setMsg("Perfil sem company_id. Verifique a tabela profiles.");
-        return;
-      }
-
-      const { data: comp, error: cerr } = await sb
-        .from("companies")
-        .select("id,name,plan,staff_limit,sub_basic_status,sub_pro_status")
-        .eq("id", prof.company_id)
-        .single();
-
-      if (cerr || !comp) {
-        setMsg(cerr?.message ?? "Empresa não encontrada.");
-        return;
-      }
-
-      setCompany(comp as any);
+      setCompany(res.company as any);
     } catch (e: any) {
       setMsg(e?.message ?? "Erro ao carregar faturação.");
     } finally {
