@@ -23,9 +23,7 @@ export async function POST(req: Request) {
     // ─────────────────────────────────────────────
     // Auth
     // ─────────────────────────────────────────────
-    const u = await getUserFromAuthHeader(
-      req.headers.get("authorization")
-    );
+    const u = await getUserFromAuthHeader(req.headers.get("authorization"));
     if (!u?.user) {
       return new NextResponse("Sem autorização", { status: 401 });
     }
@@ -33,12 +31,8 @@ export async function POST(req: Request) {
     // ─────────────────────────────────────────────
     // Input
     // ─────────────────────────────────────────────
-    const {
-      customerPhone,
-      customerName,
-      startISO,
-      durationMinutes,
-    } = await req.json();
+    const { customerPhone, customerName, startISO, durationMinutes } =
+      await req.json();
 
     if (!customerPhone || !startISO) {
       return new NextResponse("Campos em falta", { status: 400 });
@@ -66,24 +60,38 @@ export async function POST(req: Request) {
     // profiles key varies across installs (id in schema.sql, uid/user_id in older DBs)
     let profile: any = null;
     {
-      const r = await db.from("profiles").select("company_id").eq("id", u.user.id).maybeSingle();
+      const r = await db
+        .from("profiles")
+        .select("company_id")
+        .eq("id", u.user.id)
+        .maybeSingle();
       profile = r.data;
       if (r.error && /column\s+\"id\"\s+does not exist/i.test(r.error.message)) {
-        // ignore, try next
         profile = null;
       }
     }
 
     if (!profile?.company_id) {
-      const r = await db.from("profiles").select("company_id").eq("uid", u.user.id).maybeSingle();
+      const r = await db
+        .from("profiles")
+        .select("company_id")
+        .eq("uid", u.user.id)
+        .maybeSingle();
       profile = r.data;
-      if (r.error && /column\s+\"uid\"\s+does not exist/i.test(r.error.message)) {
+      if (
+        r.error &&
+        /column\s+\"uid\"\s+does not exist/i.test(r.error.message)
+      ) {
         profile = null;
       }
     }
 
     if (!profile?.company_id) {
-      const r = await db.from("profiles").select("company_id").eq("user_id", u.user.id).maybeSingle();
+      const r = await db
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", u.user.id)
+        .maybeSingle();
       profile = r.data;
     }
 
@@ -92,28 +100,65 @@ export async function POST(req: Request) {
     }
 
     // ─────────────────────────────────────────────
-    // Customer (upsert)
+    // Customer (find-or-create by phone)
+    // NÃO sobrescreve o nome do cliente se ele já existir
+    // Só preenche uma vez se estiver vazio
     // ─────────────────────────────────────────────
-    const { data: customer, error: custErr } = await db
+    const incomingName = (customerName || "").trim() || null;
+
+    // 1) procurar cliente pelo telefone
+    const { data: existingCustomer, error: findErr } = await db
       .from("customers")
-      .upsert(
-        {
+      .select("id, phone, name")
+      .eq("company_id", profile.company_id)
+      .eq("phone", phone)
+      .maybeSingle();
+
+    if (findErr) {
+      return new NextResponse(findErr.message, { status: 400 });
+    }
+
+    let customer = existingCustomer;
+
+    // 2) se não existir, cria
+    if (!customer) {
+      const { data: createdCustomer, error: createErr } = await db
+        .from("customers")
+        .insert({
           company_id: profile.company_id,
           phone,
-          name: customerName || null,
+          name: incomingName,
           consent_whatsapp: true,
-        },
-        { onConflict: "company_id,phone" }
-      )
-      .select("id, phone, name")
-      .single();
+        })
+        .select("id, phone, name")
+        .single();
 
-    if (custErr) {
-      return new NextResponse(custErr.message, { status: 400 });
+      if (createErr) {
+        return new NextResponse(createErr.message, { status: 400 });
+      }
+
+      customer = createdCustomer;
+    } else {
+      // 3) se existir, não sobrescreve nome
+      // só preenche se estiver vazio
+      if (!customer.name && incomingName) {
+        const { data: updatedCustomer, error: updErr } = await db
+          .from("customers")
+          .update({ name: incomingName })
+          .eq("id", customer.id)
+          .select("id, phone, name")
+          .single();
+
+        if (updErr) {
+          return new NextResponse(updErr.message, { status: 400 });
+        }
+
+        customer = updatedCustomer;
+      }
     }
 
     // ─────────────────────────────────────────────
-    // Appointment
+    // Appointment (com snapshot do nome)
     // ─────────────────────────────────────────────
     const { data: appointment, error: apptErr } = await db
       .from("appointments")
@@ -123,8 +168,9 @@ export async function POST(req: Request) {
         start_time: start.toISOString(),
         end_time: end.toISOString(),
         status: "BOOKED",
+        customer_name_snapshot: (customerName || "").trim() || null,
       })
-      .select("id, start_time")
+      .select("id, start_time, customer_name_snapshot")
       .single();
 
     if (apptErr) {
@@ -134,24 +180,26 @@ export async function POST(req: Request) {
     // ─────────────────────────────────────────────
     // Template variables
     // ─────────────────────────────────────────────
-    const clientName = customer.name || "Cliente";
+    // Preferimos o snapshot / nome recebido agora para comunicação
+    const clientName =
+      appointment.customer_name_snapshot || customer.name || "Cliente";
 
-    const formattedDate = new Date(
-      appointment.start_time
-    ).toLocaleDateString("pt-PT", {
-      timeZone: "Europe/Lisbon",
-    });
+    const formattedDate = new Date(appointment.start_time).toLocaleDateString(
+      "pt-PT",
+      { timeZone: "Europe/Lisbon" }
+    );
 
-    const formattedTime = new Date(
-      appointment.start_time
-    ).toLocaleTimeString("pt-PT", {
-      timeZone: "Europe/Lisbon",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    const formattedTime = new Date(appointment.start_time).toLocaleTimeString(
+      "pt-PT",
+      {
+        timeZone: "Europe/Lisbon",
+        hour: "2-digit",
+        minute: "2-digit",
+      }
+    );
 
     // ─────────────────────────────────────────────
-    // SEND TEMPLATE (ÚNICA FORMA CORRETA)
+    // SEND TEMPLATE
     // ─────────────────────────────────────────────
     await sendWhatsAppTemplate({
       to: phone,
@@ -179,10 +227,6 @@ export async function POST(req: Request) {
     });
   } catch (e: any) {
     console.error(e);
-    return new NextResponse(
-      e?.message || "Erro interno",
-      { status: 500 }
-    );
+    return new NextResponse(e?.message || "Erro interno", { status: 500 });
   }
 }
-
