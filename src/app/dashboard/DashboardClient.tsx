@@ -14,6 +14,8 @@ type AppointmentRow = {
   customers?: { name: string | null; phone: string | null } | null;
 };
 
+type StatusFilter = "ALL" | "CONFIRMED" | "PENDING" | "CANCELLED";
+
 function formatDateTimeLisbon(iso: string) {
   const dt = new Date(iso);
   const date = dt.toLocaleDateString("pt-PT", { timeZone: "Europe/Lisbon" });
@@ -34,12 +36,33 @@ function normalizeStatus(s: string) {
   return raw || "—";
 }
 
+// No teu sistema “pendentes” = BOOKED + PENDING
+function statusBucket(normalized: string): StatusFilter {
+  if (normalized === "CONFIRMED") return "CONFIRMED";
+  if (normalized === "CANCELLED") return "CANCELLED";
+  if (normalized === "BOOKED" || normalized === "PENDING") return "PENDING";
+  return "ALL";
+}
+
 function statusTone(status: string) {
   const s = normalizeStatus(status);
   if (s === "CONFIRMED") return "green";
   if (s === "BOOKED" || s === "PENDING") return "blue";
   if (s === "CANCELLED") return "gray";
   return "gray";
+}
+
+function statusLabelPT(status: string) {
+  const s = normalizeStatus(status);
+  if (s === "CONFIRMED") return "CONFIRMADO";
+  if (s === "CANCELLED") return "CANCELADO";
+  if (s === "BOOKED") return "RESERVADO";
+  if (s === "PENDING") return "PENDENTE";
+  return s || "—";
+}
+
+function cleanStr(x: any) {
+  return (x ?? "").toString().trim().toLowerCase();
 }
 
 export default function DashboardClient() {
@@ -49,18 +72,9 @@ export default function DashboardClient() {
   const [rows, setRows] = useState<AppointmentRow[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
 
-  const counts = useMemo(() => {
-    const total = rows.length;
-    const confirmed = rows.filter((r) => normalizeStatus(r.status) === "CONFIRMED").length;
-    const booked = rows.filter((r) => normalizeStatus(r.status) === "BOOKED").length;
-    const pending = rows.filter((r) => normalizeStatus(r.status) === "PENDING").length;
-    const cancelled = rows.filter((r) => normalizeStatus(r.status) === "CANCELLED").length;
-
-    // dependendo do teu sistema, "pendentes" pode ser booked + pending
-    const pendentes = pending + booked;
-
-    return { total, confirmed, pendentes, cancelled };
-  }, [rows]);
+  // B: filtros
+  const [filter, setFilter] = useState<StatusFilter>("ALL");
+  const [q, setQ] = useState("");
 
   useEffect(() => {
     let unsub: (() => void) | null = null;
@@ -70,7 +84,6 @@ export default function DashboardClient() {
         setLoading(true);
         setError(null);
 
-        // tenta obter session
         const { data: sessionRes } = await supabase.auth.getSession();
         let uid = sessionRes.session?.user?.id ?? null;
 
@@ -99,7 +112,6 @@ export default function DashboardClient() {
     };
 
     const getCompanyId = async (uid: string) => {
-      // profiles key varies across installs (id/uid/user_id)
       {
         const r = await supabase.from("profiles").select("company_id").eq("id", uid).maybeSingle();
         if (r.data?.company_id) return r.data.company_id as string;
@@ -137,8 +149,8 @@ export default function DashboardClient() {
         `
         )
         .eq("company_id", companyId)
-        .order("start_time", { ascending: false })
-        .limit(100);
+        .order("start_time", { ascending: true }) // 👈 já ajuda para “próximas”
+        .limit(200);
 
       if (qErr) {
         setError(qErr.message);
@@ -163,12 +175,9 @@ export default function DashboardClient() {
       setLoading(true);
       setError(null);
 
-      // reaproveita a lógica do effect: chama getSession e load “por dentro”
       const { data: sessionRes } = await supabase.auth.getSession();
       const uid = sessionRes.session?.user?.id ?? userId;
-      // força recarregar
-      // (repetindo o load de forma simples)
-      // company_id:
+
       let companyId: string | null = null;
       {
         const r = await supabase.from("profiles").select("company_id").eq("id", uid).maybeSingle();
@@ -202,8 +211,8 @@ export default function DashboardClient() {
         `
         )
         .eq("company_id", companyId)
-        .order("start_time", { ascending: false })
-        .limit(100);
+        .order("start_time", { ascending: true })
+        .limit(200);
 
       if (qErr) {
         setError(qErr.message);
@@ -223,6 +232,77 @@ export default function DashboardClient() {
     await supabase.auth.signOut();
     window.location.href = "/login";
   };
+
+  // ✅ B: dataset “enriquecido” (nome/telefone/status normalizado)
+  const enriched = useMemo(() => {
+    return rows.map((a) => {
+      const displayName =
+        a.customer_name_snapshot?.trim() ||
+        a.customers?.name?.trim() ||
+        "Cliente";
+
+      const phone = a.customers?.phone || "—";
+      const st = normalizeStatus(a.status);
+      const bucket = statusBucket(st);
+
+      return {
+        ...a,
+        _displayName: displayName,
+        _phone: phone,
+        _st: st,
+        _bucket: bucket,
+        _startMs: new Date(a.start_time).getTime(),
+      };
+    });
+  }, [rows]);
+
+  // ✅ B: ordenação “próximas primeiro” (futuras no topo)
+  const sorted = useMemo(() => {
+    const now = Date.now();
+    const copy = [...enriched];
+
+    copy.sort((a, b) => {
+      const aFuture = a._startMs >= now;
+      const bFuture = b._startMs >= now;
+
+      // futuras primeiro
+      if (aFuture !== bFuture) return aFuture ? -1 : 1;
+
+      // entre futuras: mais próxima primeiro
+      if (aFuture && bFuture) return a._startMs - b._startMs;
+
+      // entre passadas: mais recente primeiro
+      return b._startMs - a._startMs;
+    });
+
+    return copy;
+  }, [enriched]);
+
+  // ✅ B: filtro + busca
+  const filtered = useMemo(() => {
+    const qq = cleanStr(q);
+    return sorted.filter((a) => {
+      const okFilter = filter === "ALL" ? true : a._bucket === filter;
+
+      if (!okFilter) return false;
+      if (!qq) return true;
+
+      const name = cleanStr(a._displayName);
+      const phone = cleanStr(a._phone);
+      return name.includes(qq) || phone.includes(qq);
+    });
+  }, [sorted, filter, q]);
+
+  // ✅ B: contadores do conjunto filtrado (fica muito premium)
+  const counts = useMemo(() => {
+    const total = filtered.length;
+    const confirmed = filtered.filter((r) => r._bucket === "CONFIRMED").length;
+    const pending = filtered.filter((r) => r._bucket === "PENDING").length;
+    const cancelled = filtered.filter((r) => r._bucket === "CANCELLED").length;
+    return { total, confirmed, pendentes: pending, cancelled };
+  }, [filtered]);
+
+  const activeChip = (v: StatusFilter) => (v === filter ? "chip active" : "chip");
 
   if (loading) {
     return (
@@ -245,7 +325,7 @@ export default function DashboardClient() {
             <div className="card skeleton" />
           </div>
 
-          <div className="panel skeleton" style={{ height: 220 }} />
+          <div className="panel skeleton" style={{ height: 240 }} />
         </div>
 
         <style jsx>{premiumCss}</style>
@@ -313,22 +393,46 @@ export default function DashboardClient() {
           </div>
         </div>
 
+        {/* ✅ B: barra premium de filtros + busca */}
+        <div className="toolbar">
+          <div className="chips">
+            <button className={activeChip("ALL")} onClick={() => setFilter("ALL")}>Todas</button>
+            <button className={activeChip("CONFIRMED")} onClick={() => setFilter("CONFIRMED")}>Confirmadas</button>
+            <button className={activeChip("PENDING")} onClick={() => setFilter("PENDING")}>Pendentes</button>
+            <button className={activeChip("CANCELLED")} onClick={() => setFilter("CANCELLED")}>Canceladas</button>
+          </div>
+
+          <div className="searchWrap">
+            <input
+              className="search"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar por cliente ou telefone…"
+            />
+            <button className="btn ghost" onClick={refresh}>Atualizar</button>
+          </div>
+        </div>
+
         <div className="gridCards">
           <div className="card">
             <div className="cardLabel">Total</div>
             <div className="cardValue">{counts.total}</div>
+            <div className="cardHint">Considera filtro + busca</div>
           </div>
           <div className="card">
             <div className="cardLabel">Confirmadas</div>
             <div className="cardValue">{counts.confirmed}</div>
+            <div className="cardHint">Estado: confirmado</div>
           </div>
           <div className="card">
             <div className="cardLabel">Pendentes</div>
             <div className="cardValue">{counts.pendentes}</div>
+            <div className="cardHint">Reservado / pendente</div>
           </div>
           <div className="card">
             <div className="cardLabel">Canceladas</div>
             <div className="cardValue">{counts.cancelled}</div>
+            <div className="cardHint">Estado: cancelado</div>
           </div>
         </div>
 
@@ -336,9 +440,18 @@ export default function DashboardClient() {
           <div className="panelHead">
             <div>
               <div className="panelTitle">Próximas marcações</div>
-              <div className="panelSub">Lista das últimas marcações (máx. 100)</div>
+              <div className="panelSub">
+                Futuras aparecem primeiro • {filtered.length} itens
+              </div>
             </div>
-            <button className="btn ghost" onClick={refresh}>Atualizar</button>
+
+            <div className="panelRight">
+              {q ? (
+                <button className="chip subtle" onClick={() => setQ("")}>
+                  Limpar busca
+                </button>
+              ) : null}
+            </div>
           </div>
 
           <div className="tableWrap">
@@ -352,31 +465,25 @@ export default function DashboardClient() {
                 </tr>
               </thead>
               <tbody>
-                {rows.length === 0 ? (
+                {filtered.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="empty">
-                      Nenhuma marcação ainda.
+                      Nenhuma marcação encontrada para este filtro/busca.
                     </td>
                   </tr>
                 ) : (
-                  rows.map((a) => {
-                    const displayName =
-                      a.customer_name_snapshot?.trim() ||
-                      a.customers?.name?.trim() ||
-                      "Cliente";
-
-                    const phone = a.customers?.phone || "—";
+                  filtered.map((a) => {
                     const { date, time } = formatDateTimeLisbon(a.start_time);
-                    const st = normalizeStatus(a.status);
                     const tone = statusTone(a.status);
+                    const label = statusLabelPT(a.status);
 
                     return (
                       <tr key={a.id}>
                         <td className="mono">{date} às {time}</td>
-                        <td className="strong">{displayName}</td>
-                        <td className="mono">{phone}</td>
+                        <td className="strong">{(a as any)._displayName}</td>
+                        <td className="mono">{(a as any)._phone}</td>
                         <td style={{ textAlign: "right" }}>
-                          <span className={`badge ${tone}`}>{st}</span>
+                          <span className={`badge ${tone}`}>{label}</span>
                         </td>
                       </tr>
                     );
@@ -492,6 +599,68 @@ h1{
   background:#fff;
 }
 
+/* ✅ B: toolbar premium */
+.toolbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin: 6px 0 14px;
+  flex-wrap: wrap;
+}
+
+.chips{
+  display:flex;
+  gap:8px;
+  flex-wrap: wrap;
+}
+
+.chip{
+  appearance:none;
+  border:1px solid rgba(15,23,42,0.10);
+  background: rgba(255,255,255,0.86);
+  color: rgba(15,23,42,0.85);
+  padding:9px 10px;
+  border-radius:999px;
+  font-weight:900;
+  font-size:12px;
+  cursor:pointer;
+}
+.chip:hover{ background:#fff; transform: translateY(-1px); }
+.chip:active{ transform: translateY(0px); }
+.chip.active{
+  background: rgba(15,23,42,0.92);
+  color:#fff;
+  border-color: rgba(15,23,42,0.18);
+}
+.chip.subtle{
+  background: rgba(99,102,241,0.08);
+  border-color: rgba(99,102,241,0.18);
+  color: rgba(99,102,241,0.95);
+}
+
+.searchWrap{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.search{
+  border:1px solid rgba(15,23,42,0.10);
+  background: rgba(255,255,255,0.90);
+  padding:10px 12px;
+  border-radius:12px;
+  min-width: 320px;
+  outline:none;
+  font-size:13px;
+}
+.search:focus{
+  border-color: rgba(99,102,241,0.35);
+  box-shadow: 0 0 0 4px rgba(99,102,241,0.10);
+}
+
 .gridCards{
   display:grid;
   grid-template-columns: repeat(4, minmax(0,1fr));
@@ -520,6 +689,12 @@ h1{
   letter-spacing:-0.03em;
 }
 
+.cardHint{
+  margin-top:6px;
+  font-size:12px;
+  color: rgba(15,23,42,0.60);
+}
+
 .panel{
   background: rgba(255,255,255,0.86);
   border:1px solid rgba(15,23,42,0.06);
@@ -546,6 +721,12 @@ h1{
   margin-top:3px;
   font-size:12px;
   color: rgba(15,23,42,0.65);
+}
+
+.panelRight{
+  display:flex;
+  align-items:center;
+  gap:10px;
 }
 
 .panelBody{ padding:14px; }
@@ -661,11 +842,14 @@ h1{
   .pageHeader{ flex-direction:column; align-items:stretch; }
   .actions{ justify-content:flex-start; }
   .table{ min-width: 680px; }
+  .search{ min-width: 240px; }
 }
 @media (max-width: 520px){
   h1{ font-size: 26px; }
   .gridCards{ grid-template-columns: 1fr; }
   .btn{ width:100%; justify-content:center; text-align:center; }
   .topLinks{ display:none; }
+  .search{ width:100%; min-width: unset; }
+  .searchWrap{ width:100%; justify-content: stretch; }
 }
 `;
