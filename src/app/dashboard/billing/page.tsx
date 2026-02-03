@@ -27,7 +27,7 @@ export default function BillingPage() {
       background:
         "radial-gradient(1200px 800px at 20% 20%, rgba(99,102,241,0.35), transparent 60%), radial-gradient(900px 700px at 80% 30%, rgba(236,72,153,0.22), transparent 55%), radial-gradient(900px 700px at 55% 85%, rgba(16,185,129,0.18), transparent 55%), linear-gradient(180deg, #0b1020 0%, #070a14 100%)",
       color: "#e5e7eb",
-      padding: 24,
+      padding: "clamp(12px, 3vw, 24px)",
     }),
     []
   );
@@ -108,7 +108,7 @@ export default function BillingPage() {
   }
 
   const topBar = (
-    <div style={{ maxWidth: 820, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+    <div className="billTop" style={{ maxWidth: 820, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
         <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: -0.4 }}>Plano e faturação</div>
         <div style={{ fontSize: 13, color: "rgba(229,231,235,0.75)" }}>
@@ -152,7 +152,7 @@ export default function BillingPage() {
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div className="planGrid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <div style={{ padding: 14, borderRadius: 16, border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.06)" }}>
                 <div style={{ fontSize: 13, color: "rgba(229,231,235,0.72)" }}>Plano atual</div>
                 <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: -0.6, marginTop: 4 }}>
@@ -249,6 +249,16 @@ export default function BillingPage() {
           </div>
         )}
       </div>
+      <style jsx>{`
+        @media (max-width: 720px){
+          .billTop{ justify-content:flex-start; }
+          .backBtn{ width: 100%; text-align:center; justify-content:center; display:inline-flex; }
+        }
+        @media (max-width: 720px){
+          .planGrid{ grid-template-columns: 1fr !important; }
+        }
+      `}</style>
+
     </div>
   );
 }
