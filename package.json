@@ -3,18 +3,16 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-
   "scripts": {
-  "dev": "NEXT_DISABLE_TURBOPACK=1 next dev",
-  "build": "next build",
-  "start": "next start",
-  "reminders:24h": "node --loader ts-node/esm scripts/send_reminders_24h.ts",
-  "thanks": "node --loader ts-node/esm scripts/send_thank_you.ts",
-  "rebook": "node --loader ts-node/esm scripts/send_rebook.ts"
-}
-
-  ,
+    "dev": "NEXT_DISABLE_TURBOPACK=1 next dev",
+    "build": "next build",
+    "start": "next start",
+    "reminders:24h": "node --loader ts-node/esm scripts/send_reminders_24h.ts",
+    "thanks": "node --loader ts-node/esm scripts/send_thank_you.ts",
+    "rebook": "node --loader ts-node/esm scripts/send_rebook.ts"
+  },
   "dependencies": {
+    "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.45.4",
     "next": "^16.1.6",
     "react": "^18.3.1",

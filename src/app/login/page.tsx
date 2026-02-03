@@ -14,7 +14,7 @@ export default function Login() {
   const cardStyle = useMemo(
     () => ({
       width: "100%",
-      maxWidth: 460,
+      maxWidth: 400,
       background: "rgba(255,255,255,0.82)",
       border: "1px solid rgba(2,6,23,0.08)",
       borderRadius: 20,
@@ -65,6 +65,7 @@ export default function Login() {
 
   return (
     <main
+      className="wrap"
       style={{
         minHeight: "calc(100vh - 40px)",
         display: "grid",
@@ -72,28 +73,10 @@ export default function Login() {
         padding: "20px 0",
       }}
     >
-      <div style={{ width: "100%", maxWidth: 980, padding: "0 18px" }}>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1.1fr 0.9fr",
-            gap: 18,
-            alignItems: "stretch",
-          }}
-        >
+      <div className="container" style={{ width: "100%", maxWidth: 980, padding: "0 18px" }}>
+        <div className="layoutGrid">
           {/* Left: Brand / value */}
-          <div
-            style={{
-              borderRadius: 22,
-              padding: 28,
-              border: "1px solid rgba(2,6,23,0.06)",
-              background:
-                "linear-gradient(135deg, rgba(15,23,42,0.92), rgba(2,132,199,0.88))",
-              color: "rgba(255,255,255,0.95)",
-              boxShadow:
-                "0 40px 80px rgba(2,6,23,0.12), 0 12px 26px rgba(2,6,23,0.10)",
-            }}
-          >
+          <div className="brandPanel">
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div
                 aria-hidden
@@ -129,28 +112,13 @@ export default function Login() {
 
             <div style={{ height: 14 }} />
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                gap: 10,
-                marginTop: 14,
-              }}
-            >
+            <div className="pillGrid">
               {[
                 { t: "Confirmação", s: "SIM / NÃO" },
                 { t: "Agenda", s: "Sem sobreposição" },
                 { t: "Controle", s: "Logs & status" },
               ].map((b) => (
-                <div
-                  key={b.t}
-                  style={{
-                    borderRadius: 16,
-                    border: "1px solid rgba(255,255,255,0.14)",
-                    background: "rgba(255,255,255,0.08)",
-                    padding: 12,
-                  }}
-                >
+                <div key={b.t} className="pill">
                   <div style={{ fontWeight: 900, letterSpacing: -0.2 }}>{b.t}</div>
                   <div style={{ opacity: 0.85, fontSize: 12 }}>{b.s}</div>
                 </div>
@@ -159,7 +127,7 @@ export default function Login() {
           </div>
 
           {/* Right: Login form */}
-          <div style={cardStyle}>
+          <div className="loginCard" style={cardStyle}>
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 800 }}>
                 Entrar
@@ -202,6 +170,7 @@ export default function Login() {
 
               {msg && (
                 <p
+                  className="msg"
                   style={{
                     marginTop: 12,
                     marginBottom: 0,
@@ -224,17 +193,97 @@ export default function Login() {
           </div>
         </div>
 
-        <div
-          style={{
-            marginTop: 14,
-            textAlign: "center",
-            fontSize: 12,
-            opacity: 0.65,
-          }}
-        >
+        <div className="footerNote">
           © {new Date().getFullYear()} {process.env.NEXT_PUBLIC_APP_NAME ?? "Agenda Blindada"}.
         </div>
       </div>
+
+      <style jsx>{`
+        .wrap {
+          width: 100%;
+          overflow-x: hidden;
+        }
+
+        .container {
+          overflow-x: hidden;
+        }
+
+        /* ✅ aqui estava o “problema”: 2 colunas fixas sem media query */
+        .layoutGrid {
+          display: grid;
+          grid-template-columns: 1.1fr 0.9fr;
+          gap: 18px;
+          align-items: stretch;
+        }
+
+        .brandPanel {
+          border-radius: 22px;
+          padding: 28px;
+          border: 1px solid rgba(2, 6, 23, 0.06);
+          background: linear-gradient(
+            135deg,
+            rgba(15, 23, 42, 0.92),
+            rgba(2, 132, 199, 0.88)
+          );
+          color: rgba(255, 255, 255, 0.95);
+          box-shadow: 0 40px 80px rgba(2, 6, 23, 0.12),
+            0 12px 26px rgba(2, 6, 23, 0.1);
+          overflow-wrap: anywhere;
+          word-break: break-word;
+        }
+
+        .pillGrid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+          margin-top: 14px;
+        }
+
+        .pill {
+          border-radius: 16px;
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          background: rgba(255, 255, 255, 0.08);
+          padding: 12px;
+          min-width: 0;
+        }
+
+        .loginCard {
+          min-width: 0;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+        }
+
+        .msg {
+          overflow-wrap: anywhere;
+          word-break: break-word;
+        }
+
+        .footerNote {
+          margin-top: 14px;
+          text-align: center;
+          font-size: 12px;
+          opacity: 0.65;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+        }
+
+        /* ✅ Responsivo WhatsApp / mobile */
+        @media (max-width: 900px) {
+          .layoutGrid {
+            grid-template-columns: 1fr;
+          }
+          .pillGrid {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        /* Melhor ainda em telas bem pequenas */
+        @media (max-width: 420px) {
+          .brandPanel {
+            padding: 20px;
+          }
+        }
+      `}</style>
     </main>
   );
 }
