@@ -7,9 +7,10 @@
     "dev": "NEXT_DISABLE_TURBOPACK=1 next dev",
     "build": "next build",
     "start": "next start",
-    "reminders:24h": "node --loader ts-node/esm scripts/send_reminders_24h.ts",
-    "thanks": "node --loader ts-node/esm scripts/send_thank_you.ts",
-    "rebook": "node --loader ts-node/esm scripts/send_rebook.ts"
+    "reminders:24h": "tsx scripts/send_reminders_24h.ts",
+"thanks": "tsx scripts/send_thank_you.ts",
+"rebook": "tsx scripts/send_rebook.ts"
+
   },
   "dependencies": {
     "@supabase/ssr": "^0.8.0",
@@ -23,6 +24,7 @@
     "@types/node": "^22.10.1",
     "@types/react": "19.2.10",
     "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.6.3"
   }
 }
