@@ -285,15 +285,38 @@ export async function POST(req: NextRequest) {
   const state: string = session.state || "IDLE";
   const ctx: any = session.context || {};
 
-  async function setSession(nextState: string, nextCtx: any) {
-    await db.from("chat_sessions").upsert({
-      company_id: companyId,
-      customer_id: customer.id,
+async function setSession(nextState: string, nextCtx: any) {
+  // 1) tenta UPDATE
+  const upd = await db
+    .from("chat_sessions")
+    .update({
       state: nextState,
       context: nextCtx ?? {},
       updated_at: new Date().toISOString(),
-    });
+    })
+    .eq("company_id", companyId)
+    .eq("customer_id", customer.id)
+    .select("id");
+
+  if (upd.error) {
+    console.error("setSession update error:", upd.error);
+    return;
   }
+
+  // se atualizou, acabou
+  if (upd.data && upd.data.length > 0) return;
+
+  // 2) se não existia linha, faz INSERT
+  const ins = await db.from("chat_sessions").insert({
+    company_id: companyId,
+    customer_id: customer.id,
+    state: nextState,
+    context: nextCtx ?? {},
+    updated_at: new Date().toISOString(),
+  });
+
+  if (ins.error) console.error("setSession insert error:", ins.error);
+}
 
   async function clearSession() {
     await setSession("IDLE", {});
