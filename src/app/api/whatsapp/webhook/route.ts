@@ -455,7 +455,7 @@ export async function POST(req: NextRequest) {
 
     if (!services || services.length === 0) {
       await setSession("ASK_DAY", { ...ctx, service_id: null, duration_minutes: 30, offset: 0 });
-      await replyAndLog("Qual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)", { step: "day" });
+      await replyAndLog("V2 - DIA: Envie HOJE, AMANHÃ, 10/02", { step: "day" });
       return NextResponse.json({ ok: true });
     }
 
