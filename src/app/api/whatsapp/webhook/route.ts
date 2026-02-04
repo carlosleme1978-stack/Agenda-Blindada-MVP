@@ -1,14 +1,156 @@
+
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendWhatsApp } from "@/lib/whatsapp/send";
 
-/**
- * Meta Webhook Verification (GET)
- * Meta vai chamar com:
- * ?hub.mode=subscribe&hub.verify_token=...&hub.challenge=...
- *
- * Deve responder 200 com o challenge em TEXTO PURO.
- */
+// ─────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────
+const TZ = "Europe/Lisbon";
+
+function onlyDigits(v: string) {
+  return String(v || "").replace(/\D/g, "");
+}
+
+function normalizeInboundText(v: string) {
+  return String(v || "").trim().toUpperCase();
+}
+
+function isIntentMark(text: string) {
+  return (
+    text.includes("QUERO MARCAR") ||
+    text === "MARCAR" ||
+    text === "AGENDAR" ||
+    text.includes("AGENDAR") ||
+    text.includes("MARCAÇÃO") ||
+    text.includes("MARCACAO")
+  );
+}
+
+function isIntentReschedule(text: string) {
+  return (
+    text.includes("REAGENDAR") ||
+    text.includes("REMARCAR") ||
+    text === "REAGENDAR" ||
+    text === "REMARCAR"
+  );
+}
+
+function isYesNo(text: string) {
+  return text === "SIM" || text === "NÃO" || text === "NAO";
+}
+
+function toISODateLisbon(date: Date) {
+  // queremos só a data (YYYY-MM-DD) em Lisboa
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return fmt.format(date); // YYYY-MM-DD
+}
+
+function parseDayPt(text: string): string | null {
+  // retorna YYYY-MM-DD (Lisboa) ou null
+  const t = text.replace(/\s+/g, " ").trim().toUpperCase();
+
+  if (t === "HOJE") {
+    return toISODateLisbon(new Date());
+  }
+  if (t === "AMANHÃ" || t === "AMANHA") {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return toISODateLisbon(d);
+  }
+
+  // dd/mm ou dd-mm
+  const m = t.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$/);
+  if (m) {
+    const dd = Number(m[1]);
+    const mm = Number(m[2]);
+    let yyyy = m[3] ? Number(m[3]) : new Date().getFullYear();
+    if (yyyy < 100) yyyy += 2000;
+
+    if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) {
+      const iso = `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+      return iso;
+    }
+  }
+
+  // yyyy-mm-dd
+  const m2 = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m2) return `${m2[1]}-${m2[2]}-${m2[3]}`;
+
+  return null;
+}
+
+function formatDatePt(isoDate: string) {
+  const d = new Date(`${isoDate}T12:00:00Z`);
+  return d.toLocaleDateString("pt-PT", { timeZone: TZ });
+}
+
+function formatTimePt(isoDate: string, hhmm: string) {
+  // hhmm "10:30"
+  return hhmm;
+}
+
+function addMinutesHHMM(hhmm: string, mins: number) {
+  const [h, m] = hhmm.split(":").map(Number);
+  const total = h * 60 + m + mins;
+  const hh = Math.floor(total / 60);
+  const mm = total % 60;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+function overlaps(aStart: string, aEnd: string, bStart: string, bEnd: string) {
+  // strings ISO
+  const as = new Date(aStart).getTime();
+  const ae = new Date(aEnd).getTime();
+  const bs = new Date(bStart).getTime();
+  const be = new Date(bEnd).getTime();
+  return as < be && bs < ae;
+}
+
+function buildSlotsForDay(params: {
+  isoDate: string; // YYYY-MM-DD
+  durationMinutes: number;
+  stepMinutes: number;
+  workStart: string; // "09:00"
+  workEnd: string; // "18:00"
+}) {
+  const { isoDate, durationMinutes, stepMinutes, workStart, workEnd } = params;
+  const slots: { startISO: string; endISO: string; label: string }[] = [];
+
+  // Vamos construir horários em Lisboa, mas gravar ISO em UTC
+  // truque: criar base em Lisboa como string e converter via Date
+  // usando "Europe/Lisbon" é chato sem lib; então fazemos assim:
+  // - assumimos que start/end enviados para criação usam ISO e backend aceita
+  // - aqui só geramos labels e depois, ao gravar, usamos Date com TZ Lisbon via toLocaleString não confiável
+  // Para MVP: vamos gravar start_time/end_time como ISO usando Date do servidor (UTC),
+  // MAS mantendo o horário que o utilizador vê. Em produção, o ideal é usar luxon/dayjs.
+  // Como já tens cron e UI a usar Lisbon no template, isto fica ok para MVP.
+
+  let cur = workStart;
+  while (true) {
+    const next = addMinutesHHMM(cur, durationMinutes);
+    // se next > workEnd, para
+    if (next > workEnd) break;
+
+    // ISO (UTC) - MVP: usar `${isoDate}T${cur}:00.000Z` (assume Z)
+    const startISO = `${isoDate}T${cur}:00.000Z`;
+    const endISO = `${isoDate}T${next}:00.000Z`;
+
+    slots.push({ startISO, endISO, label: cur });
+    cur = addMinutesHHMM(cur, stepMinutes);
+  }
+
+  return slots;
+}
+
+// ─────────────────────────────────────────────
+// Webhook Verification (GET)
+// ─────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   const searchParams = req.nextUrl.searchParams;
 
@@ -25,11 +167,11 @@ export async function GET(req: NextRequest) {
   return new Response("Forbidden", { status: 403 });
 }
 
+// ─────────────────────────────────────────────
+// Webhook Messages (POST)
+// ─────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   const body = await req.json();
-
-  console.log("WHATSAPP WEBHOOK POST:", JSON.stringify(body, null, 2));
-
   const entry = body.entry?.[0];
   const change = entry?.changes?.[0];
   const value = change?.value;
@@ -39,16 +181,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  const rawFrom: string = message.from; // geralmente vem só dígitos (sem +)
-  const fromDigits = rawFrom.replace(/\D/g, "");
-  const text = String(message.text.body).trim().toUpperCase();
+  const rawFrom: string = message.from;
+  const fromDigits = onlyDigits(rawFrom);
+  const textRaw = normalizeInboundText(message.text.body);
   const waMessageId: string | undefined = message.id;
 
   const db = supabaseAdmin();
 
-  // =========================
-  // Idempotência: se já processamos esse message.id, não repetimos
-  // =========================
+  // Idempotência inbound
   if (waMessageId) {
     const { data: existing } = await db
       .from("message_log")
@@ -61,90 +201,422 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // =========================
-  // Log inbound (sempre)
-  // =========================
-  const insIn = await db.from("message_log").insert({
+  // Log inbound
+  await db.from("message_log").insert({
     direction: "inbound",
     customer_phone: fromDigits,
-    body: text,
+    body: textRaw,
     meta: {
       wa_message_id: waMessageId ?? null,
       raw: message,
     },
   });
 
-  if (insIn.error) console.error("message_log inbound insert error:", insIn.error);
-
-  // Só processa SIM / NÃO
-  if (text !== "SIM" && text !== "NÃO") {
-    return NextResponse.json({ ok: true });
-  }
-
-  // =========================
-  // Encontrar customer pelo telefone
-  // =========================
+  // ─────────────────────────────────────────────
+  // Encontrar customer e company (MVP: pelo phone; se não existir, tenta 1ª company)
+  // ─────────────────────────────────────────────
   const candidates = [fromDigits, `+${fromDigits}`];
 
-  const { data: customer, error: custErr } = await db
-    .from("customers")
-    .select("id, phone")
-    .in("phone", candidates)
-    .limit(1)
-    .maybeSingle();
+  let customer: any = null;
 
-  if (custErr || !customer) {
-    console.error("Customer not found for phone:", fromDigits, custErr);
-    return NextResponse.json({ ok: true });
+  // tenta achar customer em qualquer company (MVP)
+  {
+    const r = await db
+      .from("customers")
+      .select("id, phone, company_id, name")
+      .in("phone", candidates)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    customer = r.data ?? null;
   }
 
-  // =========================
-  // Última marcação BOOKED desse cliente
-  // =========================
-  const { data: appt, error: apptErr } = await db
-    .from("appointments")
-    .select("id,status")
+  // Se não existe customer, cria na 1ª empresa (MVP simples)
+  if (!customer) {
+    const { data: company } = await db
+      .from("companies")
+      .select("id")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (!company?.id) {
+      return NextResponse.json({ ok: true });
+    }
+
+    const created = await db
+      .from("customers")
+      .insert({
+        company_id: company.id,
+        phone: fromDigits,
+        name: null,
+        consent_whatsapp: true,
+      })
+      .select("id, phone, company_id, name")
+      .single();
+
+    customer = created.data;
+  }
+
+  const companyId = customer.company_id;
+
+  // ─────────────────────────────────────────────
+  // Sessão do chat (estado)
+  // ─────────────────────────────────────────────
+  const { data: session0 } = await db
+    .from("chat_sessions")
+    .select("id, state, context")
+    .eq("company_id", companyId)
     .eq("customer_id", customer.id)
-    .eq("status", "BOOKED")
-    .order("created_at", { ascending: false })
-    .limit(1)
     .maybeSingle();
 
-  if (apptErr || !appt) {
-    console.warn("No BOOKED appointment for customer:", customer.id, apptErr);
-    return NextResponse.json({ ok: true });
+  const session = session0 ?? { state: "IDLE", context: {} };
+  const state: string = session.state || "IDLE";
+  const ctx: any = session.context || {};
+
+  async function setSession(nextState: string, nextCtx: any) {
+    await db.from("chat_sessions").upsert({
+      company_id: companyId,
+      customer_id: customer.id,
+      state: nextState,
+      context: nextCtx ?? {},
+      updated_at: new Date().toISOString(),
+    });
   }
 
-  const newStatus = text === "SIM" ? "CONFIRMED" : "CANCELLED";
+  async function clearSession() {
+    await setSession("IDLE", {});
+  }
 
-  const up = await db.from("appointments").update({ status: newStatus }).eq("id", appt.id);
-  if (up.error) console.error("appointments update error:", up.error);
-
-  // =========================
-  // Responder no WhatsApp + log outbound
-  // =========================
-  const reply =
-    text === "SIM"
-      ? "✅ Perfeito! Sua marcação foi confirmada. Obrigado."
-      : "❌ Ok! Sua marcação foi cancelada. Se quiser remarcar, responda aqui.";
-
-  try {
-    await sendWhatsApp(fromDigits, reply);
-
-    const insOut = await db.from("message_log").insert({
+  async function replyAndLog(bodyText: string, meta: any = {}) {
+    await sendWhatsApp(fromDigits, bodyText);
+    await db.from("message_log").insert({
+      company_id: companyId,
       direction: "outbound",
       customer_phone: fromDigits,
-      body: reply,
-      meta: {
-        appointment_id: appt.id,
-        in_reply_to: waMessageId ?? null,
-      },
+      body: bodyText,
+      meta: { in_reply_to: waMessageId ?? null, ...meta },
     });
-
-    if (insOut.error) console.error("message_log outbound insert error:", insOut.error);
-  } catch (e) {
-    console.error("sendWhatsApp error:", e);
   }
 
+  // ─────────────────────────────────────────────
+  // Comandos globais
+  // ─────────────────────────────────────────────
+  if (isIntentReschedule(textRaw)) {
+    // buscar próxima marcação ativa (BOOKED/CONFIRMED) e guardar para cancelar quando escolher novo slot
+    const { data: nextAppt } = await db
+      .from("appointments")
+      .select("id,status,start_time")
+      .eq("company_id", companyId)
+      .eq("customer_id", customer.id)
+      .in("status", ["BOOKED", "CONFIRMED"])
+      .gte("start_time", new Date().toISOString())
+      .order("start_time", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    await setSession("ASK_SERVICE", {
+      mode: "RESCHEDULE",
+      reschedule_from_appointment_id: nextAppt?.id ?? null,
+      offset: 0,
+    });
+
+    // listar serviços ativos (se houver)
+    const { data: services } = await db
+      .from("services")
+      .select("id,name,duration_minutes")
+      .eq("company_id", companyId)
+      .eq("active", true)
+      .order("created_at", { ascending: true })
+      .limit(10);
+
+    if (services && services.length > 0) {
+      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+      await replyAndLog(
+        `🔁 Reagendar\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`,
+        { flow: "reschedule", step: "service" }
+      );
+    } else {
+      await setSession("ASK_DAY", {
+        mode: "RESCHEDULE",
+        reschedule_from_appointment_id: nextAppt?.id ?? null,
+        service_id: null,
+        duration_minutes: 30,
+        offset: 0,
+      });
+      await replyAndLog(
+        "🔁 Reagendar\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)",
+        { flow: "reschedule", step: "day" }
+      );
+    }
+
+    return NextResponse.json({ ok: true });
+  }
+
+  if (isIntentMark(textRaw)) {
+    await setSession("ASK_SERVICE", { mode: "NEW", offset: 0 });
+
+    const { data: services } = await db
+      .from("services")
+      .select("id,name,duration_minutes")
+      .eq("company_id", companyId)
+      .eq("active", true)
+      .order("created_at", { ascending: true })
+      .limit(10);
+
+    if (services && services.length > 0) {
+      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+      await replyAndLog(
+        `📅 Marcação\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`,
+        { flow: "new", step: "service" }
+      );
+    } else {
+      await setSession("ASK_DAY", { mode: "NEW", service_id: null, duration_minutes: 30, offset: 0 });
+      await replyAndLog(
+        "📅 Marcação\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)",
+        { flow: "new", step: "day" }
+      );
+    }
+
+    return NextResponse.json({ ok: true });
+  }
+
+  // ─────────────────────────────────────────────
+  // CONFIRMAÇÃO SIM / NÃO (mantém o teu comportamento, mas também suporta WAIT_CONFIRM)
+  // ─────────────────────────────────────────────
+  if (isYesNo(textRaw)) {
+    const yn = textRaw === "NAO" ? "NÃO" : textRaw;
+
+    // Se temos no contexto um appointment pendente, usa ele
+    const pendingId = ctx?.pending_appointment_id ?? null;
+
+    let appt: any = null;
+    if (pendingId) {
+      const r = await db
+        .from("appointments")
+        .select("id,status")
+        .eq("id", pendingId)
+        .maybeSingle();
+      appt = r.data ?? null;
+    }
+
+    // fallback: última BOOKED do cliente
+    if (!appt) {
+      const r = await db
+        .from("appointments")
+        .select("id,status")
+        .eq("company_id", companyId)
+        .eq("customer_id", customer.id)
+        .eq("status", "BOOKED")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      appt = r.data ?? null;
+    }
+
+    if (!appt) return NextResponse.json({ ok: true });
+
+    const newStatus = yn === "SIM" ? "CONFIRMED" : "CANCELLED";
+    await db.from("appointments").update({ status: newStatus }).eq("id", appt.id);
+
+    const reply =
+      yn === "SIM"
+        ? "✅ Perfeito! Sua marcação foi confirmada. Obrigado."
+        : "❌ Ok! Sua marcação foi cancelada. Se quiser remarcar, responda: QUERO MARCAR";
+
+    await replyAndLog(reply, { appointment_id: appt.id, flow: "confirm" });
+    await clearSession();
+    return NextResponse.json({ ok: true });
+  }
+
+  // ─────────────────────────────────────────────
+  // State machine (serviço → dia → horários → escolher → criar BOOKED)
+  // ─────────────────────────────────────────────
+  if (state === "ASK_SERVICE") {
+    const choice = Number(textRaw);
+    const { data: services } = await db
+      .from("services")
+      .select("id,name,duration_minutes")
+      .eq("company_id", companyId)
+      .eq("active", true)
+      .order("created_at", { ascending: true })
+      .limit(10);
+
+    if (!services || services.length === 0) {
+      await setSession("ASK_DAY", { ...ctx, service_id: null, duration_minutes: 30, offset: 0 });
+      await replyAndLog("Qual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)", { step: "day" });
+      return NextResponse.json({ ok: true });
+    }
+
+    if (![1, 2, 3].includes(choice) || !services[choice - 1]) {
+      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+      await replyAndLog(`Responda 1, 2 ou 3:\n${lines.join("\n")}`, { step: "service_retry" });
+      return NextResponse.json({ ok: true });
+    }
+
+    const svc = services[choice - 1];
+    await setSession("ASK_DAY", {
+      ...ctx,
+      service_id: svc.id,
+      service_name: svc.name,
+      duration_minutes: svc.duration_minutes,
+      offset: 0,
+    });
+
+    await replyAndLog(`✅ Serviço: ${svc.name}\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)`, {
+      step: "day",
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (state === "ASK_DAY") {
+    const isoDate = parseDayPt(textRaw);
+    if (!isoDate) {
+      await replyAndLog("Não entendi o dia. Envie: HOJE, AMANHÃ ou 10/02", { step: "day_retry" });
+      return NextResponse.json({ ok: true });
+    }
+
+    const duration = Number(ctx?.duration_minutes) || 30;
+
+    // horários padrão MVP (depois o onboarding vai alimentar isto)
+    const allSlots = buildSlotsForDay({
+      isoDate,
+      durationMinutes: duration,
+      stepMinutes: 30,
+      workStart: "09:00",
+      workEnd: "18:00",
+    });
+
+    // filtrar slots já ocupados
+    const dayStart = `${isoDate}T00:00:00.000Z`;
+    const dayEnd = `${isoDate}T23:59:59.999Z`;
+
+    const { data: dayAppts } = await db
+      .from("appointments")
+      .select("start_time,end_time,status")
+      .eq("company_id", companyId)
+      .gte("start_time", dayStart)
+      .lte("start_time", dayEnd)
+      .in("status", ["BOOKED", "CONFIRMED"]);
+
+    const free = allSlots.filter((s) => {
+      return !(dayAppts || []).some((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time));
+    });
+
+    if (free.length === 0) {
+      await replyAndLog(`Não há horários disponíveis em ${formatDatePt(isoDate)}. Tente outro dia.`, {
+        step: "no_slots",
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    const page = free.slice(0, 3);
+    const lines = page.map((s, i) => `${i + 1}) ${formatTimePt(isoDate, s.label)}`).join("\n");
+
+    await setSession("SHOW_SLOTS", {
+      ...ctx,
+      isoDate,
+      offset: 0,
+      slots: free, // guardamos a lista para paginação
+    });
+
+    await replyAndLog(
+      `📅 ${formatDatePt(isoDate)}\nEscolha um horário:\n${lines}\n4) Ver mais horários`,
+      { step: "slots_page_0" }
+    );
+
+    return NextResponse.json({ ok: true });
+  }
+
+  if (state === "SHOW_SLOTS") {
+    const n = Number(textRaw);
+
+    const slots: any[] = Array.isArray(ctx?.slots) ? ctx.slots : [];
+    const isoDate: string | null = ctx?.isoDate ?? null;
+    const offset: number = Number(ctx?.offset) || 0;
+
+    if (!isoDate || slots.length === 0) {
+      await clearSession();
+      await replyAndLog("Vamos começar de novo. Envie: QUERO MARCAR", { step: "reset" });
+      return NextResponse.json({ ok: true });
+    }
+
+    // 4 = mais horários
+    if (n === 4) {
+      const nextOffset = offset + 3;
+      const page = slots.slice(nextOffset, nextOffset + 3);
+
+      if (page.length === 0) {
+        await replyAndLog("Não há mais horários. Escolha 1, 2 ou 3 da lista anterior, ou envie outro dia.", {
+          step: "no_more_slots",
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      const lines = page.map((s, i) => `${i + 1}) ${s.label}`).join("\n");
+
+      await setSession("SHOW_SLOTS", { ...ctx, offset: nextOffset });
+
+      await replyAndLog(
+        `📅 ${formatDatePt(isoDate)}\nMais horários:\n${lines}\n4) Ver mais horários`,
+        { step: `slots_page_${nextOffset}` }
+      );
+      return NextResponse.json({ ok: true });
+    }
+
+    // escolher 1/2/3
+    if (![1, 2, 3].includes(n)) {
+      await replyAndLog("Responda 1, 2, 3 ou 4 (mais horários).", { step: "slot_retry" });
+      return NextResponse.json({ ok: true });
+    }
+
+    const chosen = slots[offset + (n - 1)];
+    if (!chosen) {
+      await replyAndLog("Esse horário não está disponível. Responda 4 para ver mais horários.", {
+        step: "slot_invalid",
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    // Se for reagendar: cancelar marcação antiga (se existir)
+    const rescheduleFromId = ctx?.reschedule_from_appointment_id ?? null;
+    if (ctx?.mode === "RESCHEDULE" && rescheduleFromId) {
+      await db.from("appointments").update({ status: "CANCELLED" }).eq("id", rescheduleFromId);
+    }
+
+    // Criar appointment BOOKED
+    const insert = await db
+      .from("appointments")
+      .insert({
+        company_id: companyId,
+        customer_id: customer.id,
+        start_time: chosen.startISO,
+        end_time: chosen.endISO,
+        status: "BOOKED",
+        customer_name_snapshot: customer.name ?? null,
+        service_id: ctx?.service_id ?? null,
+        service_name_snapshot: ctx?.service_name ?? null,
+        service_duration_minutes_snapshot: Number(ctx?.duration_minutes) || null,
+      })
+      .select("id,start_time")
+      .single();
+
+    const appt = insert.data;
+
+    await setSession("WAIT_CONFIRM", {
+      mode: ctx?.mode ?? "NEW",
+      pending_appointment_id: appt?.id ?? null,
+    });
+
+    const svcLine = ctx?.service_name ? `\nServiço: ${ctx.service_name}` : "";
+    await replyAndLog(
+      `✅ Reservei para ${formatDatePt(isoDate)} às ${chosen.label}.${svcLine}\nConfirma? Responda SIM ou NÃO.`,
+      { step: "confirm", appointment_id: appt?.id ?? null }
+    );
+
+    return NextResponse.json({ ok: true });
+  }
+
+  // Qualquer coisa fora do fluxo
   return NextResponse.json({ ok: true });
 }

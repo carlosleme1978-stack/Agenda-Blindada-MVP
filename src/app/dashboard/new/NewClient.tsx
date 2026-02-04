@@ -34,7 +34,7 @@ export default function NewClient() {
     boxShadow:
       "0 26px 48px rgba(15, 23, 42, 0.08), 0 8px 18px rgba(15, 23, 42, 0.05)",
     padding: 18,
-    maxWidth: 680,
+    maxWidth: 450,
   }),
   []
 );
@@ -93,12 +93,14 @@ export default function NewClient() {
     <div
       style={{
         minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
         background:
           "radial-gradient(1200px 800px at 20% 20%, rgba(99,102,241,0.22), transparent 60%), radial-gradient(900px 700px at 80% 30%, rgba(236,72,153,0.14), transparent 55%), radial-gradient(900px 700px at 55% 85%, rgba(16,185,129,0.12), transparent 55%), linear-gradient(180deg, #f8fafc 0%, #eef2ff 60%, #ecfeff 100%)",
         padding: "clamp(12px, 3vw, 24px)",
       }}
     >
-<main style={{ maxWidth: 900, margin: "0 auto", width: "100%" }}>
+<main style={{ maxWidth: 900, margin: "0 auto", width: "100%", flex: 1 }}>
 
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, marginBottom:14, flexWrap:"wrap" }}>
         <div>
