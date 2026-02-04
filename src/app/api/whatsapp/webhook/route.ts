@@ -13,8 +13,14 @@ function onlyDigits(v: string) {
 }
 
 function normalizeInboundText(v: string) {
-  return String(v || "").trim().toUpperCase();
+  // remove caracteres invisíveis comuns do WhatsApp/iOS
+  return String(v || "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "") // zero-width
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
 }
+
 
 function isIntentMark(text: string) {
   return (
@@ -52,20 +58,23 @@ function toISODateLisbon(date: Date) {
 }
 
 function parseDayPt(text: string): string | null {
-  // retorna YYYY-MM-DD (Lisboa) ou null
-  const t = text.replace(/\s+/g, " ").trim().toUpperCase();
+  const t = String(text || "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .trim()
+    .toUpperCase();
 
-  if (t === "HOJE") {
-    return toISODateLisbon(new Date());
-  }
+  if (t === "HOJE") return toISODateLisbon(new Date());
   if (t === "AMANHÃ" || t === "AMANHA") {
     const d = new Date();
     d.setDate(d.getDate() + 1);
     return toISODateLisbon(d);
   }
 
-  // dd/mm ou dd-mm
-  const m = t.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$/);
+  // deixa só dígitos e separadores (mata caracteres invisíveis/estranhos)
+  const clean = t.replace(/[^\d\/\-]/g, "");
+
+  // dd/mm ou dd-mm (aceita 1 ou 2 dígitos)
+  const m = clean.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$/);
   if (m) {
     const dd = Number(m[1]);
     const mm = Number(m[2]);
@@ -73,17 +82,19 @@ function parseDayPt(text: string): string | null {
     if (yyyy < 100) yyyy += 2000;
 
     if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) {
-      const iso = `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
-      return iso;
+      return `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
     }
   }
 
   // yyyy-mm-dd
-  const m2 = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const m2 = clean.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (m2) return `${m2[1]}-${m2[2]}-${m2[3]}`;
 
   return null;
 }
+
+
+
 
 function formatDatePt(isoDate: string) {
   const d = new Date(`${isoDate}T12:00:00Z`);
