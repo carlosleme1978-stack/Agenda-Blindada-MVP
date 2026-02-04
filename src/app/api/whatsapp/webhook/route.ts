@@ -444,41 +444,48 @@ export async function POST(req: NextRequest) {
   // State machine (serviço → dia → horários → escolher → criar BOOKED)
   // ─────────────────────────────────────────────
   if (state === "ASK_SERVICE") {
-    const choice = Number(textRaw);
-    const { data: services } = await db
-      .from("services")
-      .select("id,name,duration_minutes")
-      .eq("company_id", companyId)
-      .eq("active", true)
-      .order("created_at", { ascending: true })
-      .limit(10);
+  // força leitura segura do número
+  const choiceRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
+  const choice = Number(choiceRaw);
 
-    if (!services || services.length === 0) {
-      await setSession("ASK_DAY", { ...ctx, service_id: null, duration_minutes: 30, offset: 0 });
-      await replyAndLog("Qual Dia? HOJE, AMANHÃ, 10/02", { step: "day" });
-      return NextResponse.json({ ok: true });
-    }
+  const { data: services } = await db
+    .from("services")
+    .select("id,name,duration_minutes")
+    .eq("company_id", companyId)
+    .eq("active", true)
+    .order("created_at", { ascending: true });
 
-    if (![1, 2, 3].includes(choice) || !services[choice - 1]) {
-      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-      await replyAndLog(`Responda 1, 2 ou 3:\n${lines.join("\n")}`, { step: "service_retry" });
-      return NextResponse.json({ ok: true });
-    }
-
-    const svc = services[choice - 1];
-    await setSession("ASK_DAY", {
-      ...ctx,
-      service_id: svc.id,
-      service_name: svc.name,
-      duration_minutes: svc.duration_minutes,
-      offset: 0,
-    });
-
-    await replyAndLog(`✅ Serviço: ${svc.name}\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)`, {
-      step: "day",
-    });
+  // segurança: se não houver serviços, pula direto para o dia
+  if (!services || services.length === 0) {
+    await setSession("ASK_DAY", { duration_minutes: 30, offset: 0 });
+    await replyAndLog("📅 Qual dia você prefere? (HOJE, AMANHÃ, 10/02)");
     return NextResponse.json({ ok: true });
   }
+
+  // se não for 1,2,3 válido
+  if (!choice || !services[choice - 1]) {
+    const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+    await replyAndLog(`Responda com o número do serviço:\n${lines.join("\n")}`);
+    return NextResponse.json({ ok: true });
+  }
+
+  const svc = services[choice - 1];
+
+  // AVANÇA DE VERDADE O ESTADO
+  await setSession("ASK_DAY", {
+    service_id: svc.id,
+    service_name: svc.name,
+    duration_minutes: svc.duration_minutes,
+    offset: 0,
+  });
+
+  await replyAndLog(
+    `✅ Serviço escolhido: ${svc.name}\nAgora, qual dia você prefere? (HOJE, AMANHÃ, 10/02)`
+  );
+
+  return NextResponse.json({ ok: true });
+}
+
 
   if (state === "ASK_DAY") {
     const isoDate = parseDayPt(textRaw);
