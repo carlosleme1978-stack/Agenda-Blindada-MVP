@@ -1,53 +1,50 @@
-
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendWhatsApp } from "@/lib/whatsapp/send";
 
-// ─────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────
 const TZ = "Europe/Lisbon";
 
+// ───────────────────────── Helpers ─────────────────────────
 function onlyDigits(v: string) {
   return String(v || "").replace(/\D/g, "");
 }
 
 function normalizeInboundText(v: string) {
-  // remove caracteres invisíveis comuns do WhatsApp/iOS
   return String(v || "")
-    .replace(/[\u200B-\u200D\uFEFF]/g, "") // zero-width
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .toUpperCase();
 }
 
+function stripDiacritics(s: string) {
+  return s.normalize("NFD").replace(/\p{Diacritic}/gu, "");
+}
+
+function isYesNo(text: string) {
+  const t = stripDiacritics(text);
+  return t === "SIM" || t === "NAO" || t === "NÃO";
+}
 
 function isIntentMark(text: string) {
+  const t = stripDiacritics(text);
   return (
-    text.includes("QUERO MARCAR") ||
-    text === "MARCAR" ||
-    text === "AGENDAR" ||
-    text.includes("AGENDAR") ||
-    text.includes("MARCAÇÃO") ||
-    text.includes("MARCACAO")
+    t.includes("QUERO MARCAR") ||
+    t === "MARCAR" ||
+    t === "AGENDAR" ||
+    t.includes("AGENDAR") ||
+    t.includes("MARCACAO") ||
+    t.includes("MARCAÇÃO")
   );
 }
 
 function isIntentReschedule(text: string) {
-  return (
-    text.includes("REAGENDAR") ||
-    text.includes("REMARCAR") ||
-    text === "REAGENDAR" ||
-    text === "REMARCAR"
-  );
-}
-
-function isYesNo(text: string) {
-  return text === "SIM" || text === "NÃO" || text === "NAO";
+  const t = stripDiacritics(text);
+  return t.includes("REAGENDAR") || t.includes("REMARCAR") || t === "REAGENDAR" || t === "REMARCAR";
 }
 
 function toISODateLisbon(date: Date) {
-  // queremos só a data (YYYY-MM-DD) em Lisboa
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: TZ,
     year: "numeric",
@@ -58,22 +55,19 @@ function toISODateLisbon(date: Date) {
 }
 
 function parseDayPt(text: string): string | null {
-  const t = String(text || "")
-    .replace(/[\u200B-\u200D\uFEFF]/g, "")
-    .trim()
-    .toUpperCase();
+  const raw = normalizeInboundText(text);
+  const t = stripDiacritics(raw);
 
   if (t === "HOJE") return toISODateLisbon(new Date());
-  if (t === "AMANHÃ" || t === "AMANHA") {
+  if (t === "AMANHA") {
     const d = new Date();
     d.setDate(d.getDate() + 1);
     return toISODateLisbon(d);
   }
 
-  // deixa só dígitos e separadores (mata caracteres invisíveis/estranhos)
   const clean = t.replace(/[^\d\/\-]/g, "");
 
-  // dd/mm ou dd-mm (aceita 1 ou 2 dígitos)
+  // dd/mm (ano opcional)
   const m = clean.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$/);
   if (m) {
     const dd = Number(m[1]);
@@ -86,24 +80,15 @@ function parseDayPt(text: string): string | null {
     }
   }
 
-  // yyyy-mm-dd
   const m2 = clean.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (m2) return `${m2[1]}-${m2[2]}-${m2[3]}`;
 
   return null;
 }
 
-
-
-
 function formatDatePt(isoDate: string) {
   const d = new Date(`${isoDate}T12:00:00Z`);
   return d.toLocaleDateString("pt-PT", { timeZone: TZ });
-}
-
-function formatTimePt(isoDate: string, hhmm: string) {
-  // hhmm "10:30"
-  return hhmm;
 }
 
 function addMinutesHHMM(hhmm: string, mins: number) {
@@ -115,7 +100,6 @@ function addMinutesHHMM(hhmm: string, mins: number) {
 }
 
 function overlaps(aStart: string, aEnd: string, bStart: string, bEnd: string) {
-  // strings ISO
   const as = new Date(aStart).getTime();
   const ae = new Date(aEnd).getTime();
   const bs = new Date(bStart).getTime();
@@ -124,92 +108,69 @@ function overlaps(aStart: string, aEnd: string, bStart: string, bEnd: string) {
 }
 
 function buildSlotsForDay(params: {
-  isoDate: string; // YYYY-MM-DD
+  isoDate: string;
   durationMinutes: number;
   stepMinutes: number;
-  workStart: string; // "09:00"
-  workEnd: string; // "18:00"
+  workStart: string;
+  workEnd: string;
 }) {
   const { isoDate, durationMinutes, stepMinutes, workStart, workEnd } = params;
   const slots: { startISO: string; endISO: string; label: string }[] = [];
 
-  // Vamos construir horários em Lisboa, mas gravar ISO em UTC
-  // truque: criar base em Lisboa como string e converter via Date
-  // usando "Europe/Lisbon" é chato sem lib; então fazemos assim:
-  // - assumimos que start/end enviados para criação usam ISO e backend aceita
-  // - aqui só geramos labels e depois, ao gravar, usamos Date com TZ Lisbon via toLocaleString não confiável
-  // Para MVP: vamos gravar start_time/end_time como ISO usando Date do servidor (UTC),
-  // MAS mantendo o horário que o utilizador vê. Em produção, o ideal é usar luxon/dayjs.
-  // Como já tens cron e UI a usar Lisbon no template, isto fica ok para MVP.
-
   let cur = workStart;
   while (true) {
     const next = addMinutesHHMM(cur, durationMinutes);
-    // se next > workEnd, para
     if (next > workEnd) break;
 
-    // ISO (UTC) - MVP: usar `${isoDate}T${cur}:00.000Z` (assume Z)
     const startISO = `${isoDate}T${cur}:00.000Z`;
     const endISO = `${isoDate}T${next}:00.000Z`;
-
     slots.push({ startISO, endISO, label: cur });
+
     cur = addMinutesHHMM(cur, stepMinutes);
   }
 
   return slots;
 }
 
-// ─────────────────────────────────────────────
-// Webhook Verification (GET)
-// ─────────────────────────────────────────────
+// ───────────────────────── Webhook Verification ─────────────────────────
 export async function GET(req: NextRequest) {
-  const searchParams = req.nextUrl.searchParams;
-
-  const mode = searchParams.get("hub.mode");
-  const token = searchParams.get("hub.verify_token");
-  const challenge = searchParams.get("hub.challenge");
-
+  const sp = req.nextUrl.searchParams;
+  const mode = sp.get("hub.mode");
+  const token = sp.get("hub.verify_token");
+  const challenge = sp.get("hub.challenge");
   const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
 
   if (mode === "subscribe" && token && VERIFY_TOKEN && token === VERIFY_TOKEN) {
     return new Response(challenge ?? "", { status: 200 });
   }
-
   return new Response("Forbidden", { status: 403 });
 }
 
-// ─────────────────────────────────────────────
-// Webhook Messages (POST)
-// ─────────────────────────────────────────────
+// ───────────────────────── Webhook Messages ─────────────────────────
 export async function POST(req: NextRequest) {
   const body = await req.json();
+
   const entry = body.entry?.[0];
   const change = entry?.changes?.[0];
   const value = change?.value;
-
   const message = value?.messages?.[0];
-  if (!message?.text?.body || !message?.from) {
-    return NextResponse.json({ ok: true });
-  }
 
-  const rawFrom: string = message.from;
-  const fromDigits = onlyDigits(rawFrom);
-  const textRaw = normalizeInboundText(message.text.body);
-  const waMessageId: string | undefined = message.id;
+  if (!message?.text?.body || !message?.from) return NextResponse.json({ ok: true });
 
   const db = supabaseAdmin();
 
-  // Idempotência inbound
+  const fromDigits = onlyDigits(message.from);
+  const textRaw = normalizeInboundText(message.text.body);
+  const waMessageId: string | undefined = message.id;
+
+  // Idempotência (inbound)
   if (waMessageId) {
     const { data: existing } = await db
       .from("message_log")
       .select("id")
       .contains("meta", { wa_message_id: waMessageId })
       .limit(1);
-
-    if (existing && existing.length > 0) {
-      return NextResponse.json({ ok: true });
-    }
+    if (existing && existing.length > 0) return NextResponse.json({ ok: true });
   }
 
   // Log inbound
@@ -217,52 +178,29 @@ export async function POST(req: NextRequest) {
     direction: "inbound",
     customer_phone: fromDigits,
     body: textRaw,
-    meta: {
-      wa_message_id: waMessageId ?? null,
-      raw: message,
-    },
+    meta: { wa_message_id: waMessageId ?? null, raw: message },
   });
 
-  // ─────────────────────────────────────────────
-  // Encontrar customer e company (MVP: pelo phone; se não existir, tenta 1ª company)
-  // ─────────────────────────────────────────────
+  // Customer + company (MVP simples)
   const candidates = [fromDigits, `+${fromDigits}`];
 
-  let customer: any = null;
+  const { data: custFound } = await db
+    .from("customers")
+    .select("id, phone, company_id, name")
+    .in("phone", candidates)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  // tenta achar customer em qualquer company (MVP)
-  {
-    const r = await db
-      .from("customers")
-      .select("id, phone, company_id, name")
-      .in("phone", candidates)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    customer = r.data ?? null;
-  }
+  let customer = custFound;
 
-  // Se não existe customer, cria na 1ª empresa (MVP simples)
   if (!customer) {
-    const { data: company } = await db
-      .from("companies")
-      .select("id")
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-
-    if (!company?.id) {
-      return NextResponse.json({ ok: true });
-    }
+    const { data: company } = await db.from("companies").select("id").order("created_at", { ascending: true }).limit(1).maybeSingle();
+    if (!company?.id) return NextResponse.json({ ok: true });
 
     const created = await db
       .from("customers")
-      .insert({
-        company_id: company.id,
-        phone: fromDigits,
-        name: null,
-        consent_whatsapp: true,
-      })
+      .insert({ company_id: company.id, phone: fromDigits, name: null, consent_whatsapp: true })
       .select("id, phone, company_id, name")
       .single();
 
@@ -270,34 +208,6 @@ export async function POST(req: NextRequest) {
   }
 
   const companyId = customer.company_id;
-
-  // ─────────────────────────────────────────────
-  // Sessão do chat (estado)
-  // ─────────────────────────────────────────────
-  const { data: session0 } = await db
-    .from("chat_sessions")
-    .select("id, state, context")
-    .eq("company_id", companyId)
-    .eq("customer_id", customer.id)
-    .maybeSingle();
-
-  const session = session0 ?? { state: "IDLE", context: {} };
-  const state: string = session.state || "IDLE";
-  const ctx: any = session.context || {};
-
-  async function setSession(nextState: string, nextCtx: any) {
-    await db.from("chat_sessions").upsert({
-      company_id: companyId,
-      customer_id: customer.id,
-      state: nextState,
-      context: nextCtx ?? {},
-      updated_at: new Date().toISOString(),
-    });
-  }
-
-  async function clearSession() {
-    await setSession("IDLE", {});
-  }
 
   async function replyAndLog(bodyText: string, meta: any = {}) {
     await sendWhatsApp(fromDigits, bodyText);
@@ -310,11 +220,48 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ─────────────────────────────────────────────
-  // Comandos globais
-  // ─────────────────────────────────────────────
+  // Carregar sessão
+  const { data: session0 } = await db
+    .from("chat_sessions")
+    .select("state, context")
+    .eq("company_id", companyId)
+    .eq("customer_id", customer.id)
+    .maybeSingle();
+
+  const state = session0?.state || "IDLE";
+  const ctx: any = session0?.context || {};
+
+  // ✅ setSession CORRIGIDO (onConflict)
+  async function setSession(nextState: string, nextCtx: any) {
+    const payload = {
+      company_id: companyId,
+      customer_id: customer.id,
+      state: nextState,
+      context: nextCtx ?? {},
+      updated_at: new Date().toISOString(),
+    };
+
+    const r = await db.from("chat_sessions").upsert(payload, {
+      onConflict: "company_id,customer_id",
+    });
+
+    if (r.error) {
+      await db.from("message_log").insert({
+        company_id: companyId,
+        direction: "outbound",
+        customer_phone: fromDigits,
+        body: "DEBUG: setSession error",
+        meta: { error: r.error.message, payload },
+      });
+    }
+  }
+
+  async function clearSession() {
+    await setSession("IDLE", {});
+  }
+
+  // ───────────────────────── Intent: REAGENDAR ─────────────────────────
   if (isIntentReschedule(textRaw)) {
-    // buscar próxima marcação ativa (BOOKED/CONFIRMED) e guardar para cancelar quando escolher novo slot
     const { data: nextAppt } = await db
       .from("appointments")
       .select("id,status,start_time")
@@ -326,13 +273,7 @@ export async function POST(req: NextRequest) {
       .limit(1)
       .maybeSingle();
 
-    await setSession("ASK_SERVICE", {
-      mode: "RESCHEDULE",
-      reschedule_from_appointment_id: nextAppt?.id ?? null,
-      offset: 0,
-    });
-
-    // listar serviços ativos (se houver)
+    // tenta serviços
     const { data: services } = await db
       .from("services")
       .select("id,name,duration_minutes")
@@ -342,31 +283,38 @@ export async function POST(req: NextRequest) {
       .limit(10);
 
     if (services && services.length > 0) {
+      await setSession("ASK_SERVICE", {
+        mode: "RESCHEDULE",
+        reschedule_from_appointment_id: nextAppt?.id ?? null,
+        offset: 0,
+      });
       const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-      await replyAndLog(
-        `🔁 Reagendar\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`,
-        { flow: "reschedule", step: "service" }
-      );
+      await replyAndLog(`🔁 Reagendar\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`, {
+        flow: "reschedule",
+        step: "service",
+        state_before: state,
+        state_after: "ASK_SERVICE",
+      });
     } else {
       await setSession("ASK_DAY", {
         mode: "RESCHEDULE",
         reschedule_from_appointment_id: nextAppt?.id ?? null,
-        service_id: null,
         duration_minutes: 30,
         offset: 0,
       });
-      await replyAndLog(
-        "🔁 Reagendar\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)",
-        { flow: "reschedule", step: "day" }
-      );
+      await replyAndLog("🔁 Reagendar\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)", {
+        flow: "reschedule",
+        step: "day",
+        state_before: state,
+        state_after: "ASK_DAY",
+      });
     }
 
     return NextResponse.json({ ok: true });
   }
 
+  // ───────────────────────── Intent: QUERO MARCAR ─────────────────────────
   if (isIntentMark(textRaw)) {
-    await setSession("ASK_SERVICE", { mode: "NEW", offset: 0 });
-
     const { data: services } = await db
       .from("services")
       .select("id,name,duration_minutes")
@@ -376,42 +324,40 @@ export async function POST(req: NextRequest) {
       .limit(10);
 
     if (services && services.length > 0) {
+      await setSession("ASK_SERVICE", { mode: "NEW", offset: 0 });
       const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-      await replyAndLog(
-        `📅 Marcação\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`,
-        { flow: "new", step: "service" }
-      );
+      await replyAndLog(`📅 Marcação\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`, {
+        flow: "new",
+        step: "service",
+        state_before: state,
+        state_after: "ASK_SERVICE",
+      });
     } else {
-      await setSession("ASK_DAY", { mode: "NEW", service_id: null, duration_minutes: 30, offset: 0 });
-      await replyAndLog(
-        "📅 Marcação\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)",
-        { flow: "new", step: "day" }
-      );
+      await setSession("ASK_DAY", { mode: "NEW", duration_minutes: 30, offset: 0 });
+      await replyAndLog("📅 Marcação\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)", {
+        flow: "new",
+        step: "day",
+        state_before: state,
+        state_after: "ASK_DAY",
+      });
     }
 
     return NextResponse.json({ ok: true });
   }
 
-  // ─────────────────────────────────────────────
-  // CONFIRMAÇÃO SIM / NÃO (mantém o teu comportamento, mas também suporta WAIT_CONFIRM)
-  // ─────────────────────────────────────────────
+  // ───────────────────────── SIM/NÃO (confirmação) ─────────────────────────
   if (isYesNo(textRaw)) {
-    const yn = textRaw === "NAO" ? "NÃO" : textRaw;
+    const yn = stripDiacritics(textRaw) === "NAO" ? "NÃO" : textRaw;
 
-    // Se temos no contexto um appointment pendente, usa ele
     const pendingId = ctx?.pending_appointment_id ?? null;
 
     let appt: any = null;
+
     if (pendingId) {
-      const r = await db
-        .from("appointments")
-        .select("id,status")
-        .eq("id", pendingId)
-        .maybeSingle();
+      const r = await db.from("appointments").select("id,status").eq("id", pendingId).maybeSingle();
       appt = r.data ?? null;
     }
 
-    // fallback: última BOOKED do cliente
     if (!appt) {
       const r = await db
         .from("appointments")
@@ -435,16 +381,15 @@ export async function POST(req: NextRequest) {
         ? "✅ Perfeito! Sua marcação foi confirmada. Obrigado."
         : "❌ Ok! Sua marcação foi cancelada. Se quiser remarcar, responda: QUERO MARCAR";
 
-    await replyAndLog(reply, { appointment_id: appt.id, flow: "confirm" });
+    await replyAndLog(reply, { flow: "confirm", appointment_id: appt.id });
     await clearSession();
     return NextResponse.json({ ok: true });
   }
 
-  // ─────────────────────────────────────────────
-  // State machine (serviço → dia → horários → escolher → criar BOOKED)
-  // ─────────────────────────────────────────────
+  // ───────────────────────── State: ASK_SERVICE ─────────────────────────
   if (state === "ASK_SERVICE") {
-    const choice = Number(textRaw);
+    const choice = Number(stripDiacritics(textRaw));
+
     const { data: services } = await db
       .from("services")
       .select("id,name,duration_minutes")
@@ -454,8 +399,8 @@ export async function POST(req: NextRequest) {
       .limit(10);
 
     if (!services || services.length === 0) {
-      await setSession("ASK_DAY", { ...ctx, service_id: null, duration_minutes: 30, offset: 0 });
-      await replyAndLog("Qual Dia? HOJE, AMANHÃ, 10/02", { step: "day" });
+      await setSession("ASK_DAY", { ...ctx, duration_minutes: 30, offset: 0 });
+      await replyAndLog("Qual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)", { step: "day" });
       return NextResponse.json({ ok: true });
     }
 
@@ -466,6 +411,7 @@ export async function POST(req: NextRequest) {
     }
 
     const svc = services[choice - 1];
+
     await setSession("ASK_DAY", {
       ...ctx,
       service_id: svc.id,
@@ -474,14 +420,14 @@ export async function POST(req: NextRequest) {
       offset: 0,
     });
 
-    await replyAndLog(`✅ Serviço: ${svc.name}\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)`, {
-      step: "day",
-    });
+    await replyAndLog(`✅ Serviço: ${svc.name}\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)`, { step: "day" });
     return NextResponse.json({ ok: true });
   }
 
+  // ───────────────────────── State: ASK_DAY ─────────────────────────
   if (state === "ASK_DAY") {
     const isoDate = parseDayPt(textRaw);
+
     if (!isoDate) {
       await replyAndLog("Não entendi o dia. Envie: HOJE, AMANHÃ ou 10/02", { step: "day_retry" });
       return NextResponse.json({ ok: true });
@@ -489,7 +435,6 @@ export async function POST(req: NextRequest) {
 
     const duration = Number(ctx?.duration_minutes) || 30;
 
-    // horários padrão MVP (depois o onboarding vai alimentar isto)
     const allSlots = buildSlotsForDay({
       isoDate,
       durationMinutes: duration,
@@ -498,7 +443,6 @@ export async function POST(req: NextRequest) {
       workEnd: "18:00",
     });
 
-    // filtrar slots já ocupados
     const dayStart = `${isoDate}T00:00:00.000Z`;
     const dayEnd = `${isoDate}T23:59:59.999Z`;
 
@@ -510,38 +454,30 @@ export async function POST(req: NextRequest) {
       .lte("start_time", dayEnd)
       .in("status", ["BOOKED", "CONFIRMED"]);
 
-    const free = allSlots.filter((s) => {
-      return !(dayAppts || []).some((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time));
-    });
+    const free = allSlots.filter((s) => !(dayAppts || []).some((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time)));
 
     if (free.length === 0) {
-      await replyAndLog(`Não há horários disponíveis em ${formatDatePt(isoDate)}. Tente outro dia.`, {
-        step: "no_slots",
-      });
+      await replyAndLog(`Não há horários disponíveis em ${formatDatePt(isoDate)}. Tente outro dia.`, { step: "no_slots" });
       return NextResponse.json({ ok: true });
     }
 
     const page = free.slice(0, 3);
-    const lines = page.map((s, i) => `${i + 1}) ${formatTimePt(isoDate, s.label)}`).join("\n");
+    const lines = page.map((s, i) => `${i + 1}) ${s.label}`).join("\n");
 
     await setSession("SHOW_SLOTS", {
       ...ctx,
       isoDate,
       offset: 0,
-      slots: free, // guardamos a lista para paginação
+      slots: free,
     });
 
-    await replyAndLog(
-      `📅 ${formatDatePt(isoDate)}\nEscolha um horário:\n${lines}\n4) Ver mais horários`,
-      { step: "slots_page_0" }
-    );
-
+    await replyAndLog(`📅 ${formatDatePt(isoDate)}\nEscolha um horário:\n${lines}\n4) Ver mais horários`, { step: "slots_page_0" });
     return NextResponse.json({ ok: true });
   }
 
+  // ───────────────────────── State: SHOW_SLOTS ─────────────────────────
   if (state === "SHOW_SLOTS") {
-    const n = Number(textRaw);
-
+    const n = Number(stripDiacritics(textRaw));
     const slots: any[] = Array.isArray(ctx?.slots) ? ctx.slots : [];
     const isoDate: string | null = ctx?.isoDate ?? null;
     const offset: number = Number(ctx?.offset) || 0;
@@ -552,30 +488,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // 4 = mais horários
     if (n === 4) {
       const nextOffset = offset + 3;
       const page = slots.slice(nextOffset, nextOffset + 3);
 
       if (page.length === 0) {
-        await replyAndLog("Não há mais horários. Escolha 1, 2 ou 3 da lista anterior, ou envie outro dia.", {
-          step: "no_more_slots",
-        });
+        await replyAndLog("Não há mais horários. Escolha 1, 2 ou 3 da lista anterior, ou envie outro dia.", { step: "no_more_slots" });
         return NextResponse.json({ ok: true });
       }
 
       const lines = page.map((s, i) => `${i + 1}) ${s.label}`).join("\n");
-
       await setSession("SHOW_SLOTS", { ...ctx, offset: nextOffset });
-
-      await replyAndLog(
-        `📅 ${formatDatePt(isoDate)}\nMais horários:\n${lines}\n4) Ver mais horários`,
-        { step: `slots_page_${nextOffset}` }
-      );
+      await replyAndLog(`📅 ${formatDatePt(isoDate)}\nMais horários:\n${lines}\n4) Ver mais horários`, { step: `slots_page_${nextOffset}` });
       return NextResponse.json({ ok: true });
     }
 
-    // escolher 1/2/3
     if (![1, 2, 3].includes(n)) {
       await replyAndLog("Responda 1, 2, 3 ou 4 (mais horários).", { step: "slot_retry" });
       return NextResponse.json({ ok: true });
@@ -583,20 +510,17 @@ export async function POST(req: NextRequest) {
 
     const chosen = slots[offset + (n - 1)];
     if (!chosen) {
-      await replyAndLog("Esse horário não está disponível. Responda 4 para ver mais horários.", {
-        step: "slot_invalid",
-      });
+      await replyAndLog("Esse horário não está disponível. Responda 4 para ver mais horários.", { step: "slot_invalid" });
       return NextResponse.json({ ok: true });
     }
 
-    // Se for reagendar: cancelar marcação antiga (se existir)
+    // Reagendar: cancela a marcação antiga (se existir)
     const rescheduleFromId = ctx?.reschedule_from_appointment_id ?? null;
     if (ctx?.mode === "RESCHEDULE" && rescheduleFromId) {
       await db.from("appointments").update({ status: "CANCELLED" }).eq("id", rescheduleFromId);
     }
 
-    // Criar appointment BOOKED
-    const insert = await db
+    const ins = await db
       .from("appointments")
       .insert({
         company_id: companyId,
@@ -609,25 +533,22 @@ export async function POST(req: NextRequest) {
         service_name_snapshot: ctx?.service_name ?? null,
         service_duration_minutes_snapshot: Number(ctx?.duration_minutes) || null,
       })
-      .select("id,start_time")
+      .select("id")
       .single();
 
-    const appt = insert.data;
-
     await setSession("WAIT_CONFIRM", {
+      pending_appointment_id: ins.data?.id ?? null,
       mode: ctx?.mode ?? "NEW",
-      pending_appointment_id: appt?.id ?? null,
     });
 
     const svcLine = ctx?.service_name ? `\nServiço: ${ctx.service_name}` : "";
-    await replyAndLog(
-      `✅ Reservei para ${formatDatePt(isoDate)} às ${chosen.label}.${svcLine}\nConfirma? Responda SIM ou NÃO.`,
-      { step: "confirm", appointment_id: appt?.id ?? null }
-    );
+    await replyAndLog(`✅ Reservei para ${formatDatePt(isoDate)} às ${chosen.label}.${svcLine}\nConfirma? Responda SIM ou NÃO.`, {
+      step: "confirm",
+      appointment_id: ins.data?.id ?? null,
+    });
 
     return NextResponse.json({ ok: true });
   }
 
-  // Qualquer coisa fora do fluxo
   return NextResponse.json({ ok: true });
 }
