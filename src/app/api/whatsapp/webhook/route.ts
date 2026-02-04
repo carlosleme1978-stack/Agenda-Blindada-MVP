@@ -313,6 +313,9 @@ export async function POST(req: NextRequest) {
   // ─────────────────────────────────────────────
   // Comandos globais
   // ─────────────────────────────────────────────
+  // ⛔️ Só processa intents globais se NÃO estivermos num fluxo
+if (state === "IDLE") {
+
   if (isIntentReschedule(textRaw)) {
     // buscar próxima marcação ativa (BOOKED/CONFIRMED) e guardar para cancelar quando escolher novo slot
     const { data: nextAppt } = await db
@@ -332,7 +335,6 @@ export async function POST(req: NextRequest) {
       offset: 0,
     });
 
-    // listar serviços ativos (se houver)
     const { data: services } = await db
       .from("services")
       .select("id,name,duration_minutes")
@@ -391,6 +393,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true });
   }
+
+}
 
   // ─────────────────────────────────────────────
   // CONFIRMAÇÃO SIM / NÃO (mantém o teu comportamento, mas também suporta WAIT_CONFIRM)
