@@ -348,15 +348,23 @@ async function setSession(nextState: string, nextCtx: any) {
   }
 
   async function replyAndLog(bodyText: string, meta: any = {}) {
+  try {
     await sendWhatsApp(fromDigits, bodyText);
-    await db.from("message_log").insert({
-      company_id: companyId,
-      direction: "outbound",
-      customer_phone: fromDigits,
-      body: bodyText,
-      meta: { in_reply_to: waMessageId ?? null, ...meta },
-    });
+  } catch (e) {
+    console.error("sendWhatsApp failed:", e);
+    // não trava o webhook
   }
+
+  const ins = await db.from("message_log").insert({
+    company_id: companyId,
+    direction: "outbound",
+    customer_phone: fromDigits,
+    body: bodyText,
+    meta: { in_reply_to: waMessageId ?? null, ...meta },
+  });
+
+  if (ins.error) console.error("message_log outbound insert error:", ins.error);
+}
 
   // ─────────────────────────────────────────────
   // Comandos globais
@@ -635,5 +643,99 @@ if (state === "ASK_DAY") {
 
   return NextResponse.json({ ok: true });
 }
+
+if (state === "SHOW_SLOTS") {
+  // aceita "4", "4 ", "4️⃣" etc.
+  const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
+  const n = Number(nRaw);
+
+  const slots: any[] = Array.isArray(ctx?.slots) ? ctx.slots : [];
+  const isoDate: string | null = ctx?.isoDate ?? null;
+  const offset: number = Number(ctx?.offset) || 0;
+
+  if (!isoDate || slots.length === 0) {
+    await clearSession();
+    await replyAndLog("Vamos começar de novo. Envie: QUERO MARCAR", { step: "reset" });
+    return NextResponse.json({ ok: true });
+  }
+
+  // 4 = mais horários
+  if (n === 4) {
+    const nextOffset = offset + 3;
+    const page = slots.slice(nextOffset, nextOffset + 3);
+
+    if (page.length === 0) {
+      await replyAndLog(
+        "Não há mais horários. Escolha 1, 2 ou 3 da lista anterior, ou envie outro dia.",
+        { step: "no_more_slots" }
+      );
+      return NextResponse.json({ ok: true });
+    }
+
+    const lines = page.map((s, i) => `${i + 1}) ${s.label}`).join("\n");
+
+    await setSession("SHOW_SLOTS", { ...ctx, offset: nextOffset });
+
+    await replyAndLog(
+      `📅 ${formatDatePt(isoDate)}\nMais horários:\n${lines}\n4) Ver mais horários`,
+      { step: `slots_page_${nextOffset}` }
+    );
+    return NextResponse.json({ ok: true });
+  }
+
+  // escolher 1/2/3
+  if (![1, 2, 3].includes(n)) {
+    await replyAndLog("Responda 1, 2, 3 ou 4 (mais horários).", { step: "slot_retry" });
+    return NextResponse.json({ ok: true });
+  }
+
+  const chosen = slots[offset + (n - 1)];
+  if (!chosen) {
+    await replyAndLog("Esse horário não está disponível. Responda 4 para ver mais horários.", {
+      step: "slot_invalid",
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  // reagendar: cancelar antiga
+  const rescheduleFromId = ctx?.reschedule_from_appointment_id ?? null;
+  if (ctx?.mode === "RESCHEDULE" && rescheduleFromId) {
+    await db.from("appointments").update({ status: "CANCELLED" }).eq("id", rescheduleFromId);
+  }
+
+  // criar BOOKED
+  const insert = await db
+    .from("appointments")
+    .insert({
+      company_id: companyId,
+      customer_id: customer.id,
+      start_time: chosen.startISO,
+      end_time: chosen.endISO,
+      status: "BOOKED",
+      customer_name_snapshot: customer.name ?? null,
+      service_id: ctx?.service_id ?? null,
+      service_name_snapshot: ctx?.service_name ?? null,
+      service_duration_minutes_snapshot: Number(ctx?.duration_minutes) || null,
+    })
+    .select("id")
+    .single();
+
+  const apptId = insert.data?.id ?? null;
+
+  await setSession("WAIT_CONFIRM", {
+    mode: ctx?.mode ?? "NEW",
+    pending_appointment_id: apptId,
+  });
+
+  const svcLine = ctx?.service_name ? `\nServiço: ${ctx.service_name}` : "";
+  await replyAndLog(
+    `✅ Reservei para ${formatDatePt(isoDate)} às ${chosen.label}.${svcLine}\nConfirma? Responda SIM ou NÃO.`,
+    { step: "confirm", appointment_id: apptId }
+  );
+
+  return NextResponse.json({ ok: true });
 }
+}
+
+
 
