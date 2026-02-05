@@ -175,10 +175,6 @@ function lisbonNowHHMM(): string {
   return `${hh}:${mm}`;
 }
 
-function lisbonTodayIso(): string {
-  return toISODateLisbon(new Date());
-}
-
 // ─────────────────────────────────────────────
 // Webhook Verification (GET)
 // ─────────────────────────────────────────────
@@ -291,7 +287,9 @@ export async function POST(req: NextRequest) {
   async function getCompanySchedule() {
     const { data } = await db
       .from("companies")
-      .select("lunch_break_enabled,lunch_break_start,lunch_break_end,daily_limit_enabled,daily_limit_max")
+      .select(
+        "lunch_break_enabled,lunch_break_start,lunch_break_end,daily_limit_enabled,daily_limit_max,slot_capacity"
+      )
       .eq("id", companyId)
       .maybeSingle();
 
@@ -305,6 +303,7 @@ export async function POST(req: NextRequest) {
         enabled: data?.daily_limit_enabled ?? SCHEDULE_CONFIG.dailyLimit.enabled,
         maxAppointments: data?.daily_limit_max ?? SCHEDULE_CONFIG.dailyLimit.maxAppointments,
       },
+      slotCapacity: Math.max(1, Number(data?.slot_capacity ?? 1)),
     };
   }
 
@@ -331,6 +330,19 @@ export async function POST(req: NextRequest) {
       .in("status", ["BOOKED", "CONFIRMED"]);
 
     if (error) console.error("countAppointmentsForDay error:", error);
+    return count ?? 0;
+  }
+
+  async function countOverlappingAppointments(startISO: string, endISO: string) {
+    const { count, error } = await db
+      .from("appointments")
+      .select("*", { count: "exact", head: true })
+      .eq("company_id", companyId)
+      .in("status", ["BOOKED", "CONFIRMED"])
+      .lt("start_time", endISO)
+      .gt("end_time", startISO);
+
+    if (error) console.error("countOverlappingAppointments error:", error);
     return count ?? 0;
   }
 
@@ -411,7 +423,7 @@ export async function POST(req: NextRequest) {
     const workDays: number[] = (cfg?.work_days as any) ?? [1, 2, 3, 4, 5];
 
     const nowHHMM = lisbonNowHHMM();
-    const todayIso = lisbonTodayIso();
+    const todayIso = toISODateLisbon(new Date());
     const dayNum = isoDayNumberLisbon(todayIso);
 
     const dayOk = workDays.includes(dayNum);
@@ -491,8 +503,11 @@ export async function POST(req: NextRequest) {
       .lte("start_time", dayEnd)
       .in("status", ["BOOKED", "CONFIRMED"]);
 
+    // ✅ PASSO 4: capacidade por slot
+    // mantém o slot se overlaps < slotCapacity
     let free = allSlots.filter((s) => {
-      return !(dayAppts || []).some((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time));
+      const used = (dayAppts || []).filter((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time)).length;
+      return used < COMPANY_SCHEDULE.slotCapacity;
     });
 
     // ✅ Passo 2: se for HOJE, não oferecer horários no passado
@@ -507,7 +522,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // guarda slots na sessão e envia 1ª página
     const page = free.slice(0, 3);
     const lines = page.map((s, i) => `${i + 1}) ${s.label}`).join("\n");
 
@@ -521,6 +535,7 @@ export async function POST(req: NextRequest) {
     await replyAndLog(`📅 ${formatDatePt(isoDate)}\nEscolha um horário:\n${lines}\n4) Ver mais horários`, {
       step: "slots_page_0",
       isoDate,
+      slotCapacity: COMPANY_SCHEDULE.slotCapacity,
     });
 
     return NextResponse.json({ ok: true });
@@ -663,8 +678,6 @@ export async function POST(req: NextRequest) {
   // ─────────────────────────────────────────────
   // State machine
   // ─────────────────────────────────────────────
-
-  // ASK_SERVICE
   if (state === "ASK_SERVICE") {
     const choiceRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
     const choice = Number(choiceRaw);
@@ -707,20 +720,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // ASK_DAY
   if (state === "ASK_DAY") {
     const isoDate = parseDayPt(textRaw);
     if (!isoDate) {
       await replyAndLog("Não entendi o dia. Envie: HOJE, AMANHÃ ou 10/02", { step: "day_retry" });
       return NextResponse.json({ ok: true });
     }
-
     return await processDaySelection(isoDate);
   }
 
-  // SHOW_SLOTS
   if (state === "SHOW_SLOTS") {
-    // ✅ CORREÇÃO: se o cliente mandar um DIA aqui, muda o dia e já lista horários
+    // ✅ se mandar um dia aqui, muda o dia e já lista horários
     const maybeNewDay = parseDayPt(textRaw);
     if (maybeNewDay) {
       return await processDaySelection(maybeNewDay);
@@ -739,7 +749,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // 4 = mais horários
     if (n === 4) {
       const nextOffset = offset + 3;
       const page = slots.slice(nextOffset, nextOffset + 3);
@@ -753,7 +762,6 @@ export async function POST(req: NextRequest) {
       }
 
       const lines = page.map((s, i) => `${i + 1}) ${s.label}`).join("\n");
-
       await setSession("SHOW_SLOTS", { ...ctx, offset: nextOffset });
 
       await replyAndLog(`📅 ${formatDatePt(isoDate)}\nMais horários:\n${lines}\n4) Ver mais horários`, {
@@ -774,7 +782,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // ✅ re-check pausa/limite (anti-bypass)
+    // ✅ re-check pausa
     if (COMPANY_SCHEDULE.lunchBreak.enabled && isSlotInLunchBreak(chosen, isoDate)) {
       await replyAndLog(
         `⏸️ Esse horário cai na pausa de almoço.\nEscolha outro horário (1, 2, 3) ou 4 para ver mais.`,
@@ -783,6 +791,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+    // ✅ re-check limite diário
     if (COMPANY_SCHEDULE.dailyLimit.enabled) {
       const total = await countAppointmentsForDay(isoDate);
       if (total >= COMPANY_SCHEDULE.dailyLimit.maxAppointments) {
@@ -793,6 +802,16 @@ export async function POST(req: NextRequest) {
         );
         return NextResponse.json({ ok: true });
       }
+    }
+
+    // ✅ PASSO 4 (anti-bypass): re-check capacidade do slot no DB antes de gravar
+    const usedNow = await countOverlappingAppointments(chosen.startISO, chosen.endISO);
+    if (usedNow >= COMPANY_SCHEDULE.slotCapacity) {
+      await replyAndLog(
+        `⚠️ Esse horário acabou de ficar cheio.\nEscolha outro horário (1, 2, 3) ou 4 para ver mais.`,
+        { step: "slot_capacity_full", isoDate, chosen: chosen.label, usedNow, cap: COMPANY_SCHEDULE.slotCapacity }
+      );
+      return NextResponse.json({ ok: true });
     }
 
     // reagendar: cancelar antiga
@@ -834,6 +853,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // fallback
   return NextResponse.json({ ok: true });
 }
