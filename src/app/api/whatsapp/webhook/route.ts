@@ -1,7 +1,7 @@
-
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendWhatsApp } from "@/lib/whatsapp/send";
+import { SCHEDULE_CONFIG } from "@/config/schedule";
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -14,15 +14,14 @@ function onlyDigits(v: string) {
 
 function normalizeInboundText(v: string) {
   return String(v || "")
-    .normalize("NFKC") // normaliza unicode (iOS/WhatsApp)
-    .replace(/[\u200B-\u200D\uFEFF]/g, "") // zero-width
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .toUpperCase();
 }
 
 function stripDiacritics(s: string) {
-  // remove acentos (AMANHÃ -> AMANHA)
   return s.normalize("NFD").replace(/\p{Diacritic}/gu, "");
 }
 
@@ -51,20 +50,15 @@ function isYesNo(text: string) {
 }
 
 function toISODateLisbon(date: Date) {
-  // queremos só a data (YYYY-MM-DD) em Lisboa
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: TZ,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   });
-  return fmt.format(date); // YYYY-MM-DD
+  return fmt.format(date);
 }
 
-/**
- * usado para validar dias de trabalho da empresa
- * Retorna: 1=Seg ... 7=Dom
- */
 function isoDayNumberLisbon(isoDate: string): number {
   const d = new Date(`${isoDate}T12:00:00Z`);
   const wd = new Intl.DateTimeFormat("en-US", {
@@ -99,7 +93,6 @@ function parseDayPt(text: string): string | null {
 
   const clean = t.replace(/[^\d\/\-]/g, "");
 
-  // dd/mm ou dd-mm
   const m = clean.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$/);
   if (m) {
     const dd = Number(m[1]);
@@ -112,7 +105,6 @@ function parseDayPt(text: string): string | null {
     }
   }
 
-  // yyyy-mm-dd
   const m2 = clean.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (m2) return `${m2[1]}-${m2[2]}-${m2[3]}`;
 
@@ -141,11 +133,11 @@ function overlaps(aStart: string, aEnd: string, bStart: string, bEnd: string) {
 }
 
 function buildSlotsForDay(params: {
-  isoDate: string; // YYYY-MM-DD
+  isoDate: string;
   durationMinutes: number;
   stepMinutes: number;
-  workStart: string; // "09:00"
-  workEnd: string; // "18:00"
+  workStart: string;
+  workEnd: string;
 }) {
   const { isoDate, durationMinutes, stepMinutes, workStart, workEnd } = params;
   const slots: { startISO: string; endISO: string; label: string }[] = [];
@@ -288,6 +280,53 @@ export async function POST(req: NextRequest) {
 
   const companyId = customer.company_id;
 
+  // ✅ Carregar agenda por cliente (fallback no schedule.ts)
+  async function getCompanySchedule() {
+    const { data } = await db
+      .from("companies")
+      .select("lunch_break_enabled,lunch_break_start,lunch_break_end,daily_limit_enabled,daily_limit_max")
+      .eq("id", companyId)
+      .maybeSingle();
+
+    return {
+      lunchBreak: {
+        enabled: data?.lunch_break_enabled ?? SCHEDULE_CONFIG.lunchBreak.enabled,
+        start: data?.lunch_break_start ?? SCHEDULE_CONFIG.lunchBreak.start,
+        end: data?.lunch_break_end ?? SCHEDULE_CONFIG.lunchBreak.end,
+      },
+      dailyLimit: {
+        enabled: data?.daily_limit_enabled ?? SCHEDULE_CONFIG.dailyLimit.enabled,
+        maxAppointments: data?.daily_limit_max ?? SCHEDULE_CONFIG.dailyLimit.maxAppointments,
+      },
+    };
+  }
+
+  const COMPANY_SCHEDULE = await getCompanySchedule();
+
+  function isSlotInLunchBreak(slot: { startISO: string; endISO: string }, isoDate: string) {
+    if (!COMPANY_SCHEDULE.lunchBreak.enabled) return false;
+
+    const lbStart = `${isoDate}T${COMPANY_SCHEDULE.lunchBreak.start}:00.000Z`;
+    const lbEnd = `${isoDate}T${COMPANY_SCHEDULE.lunchBreak.end}:00.000Z`;
+
+    return overlaps(slot.startISO, slot.endISO, lbStart, lbEnd);
+  }
+
+  async function countAppointmentsForDay(isoDate: string) {
+    const dayStart = `${isoDate}T00:00:00.000Z`;
+    const dayEnd = `${isoDate}T23:59:59.999Z`;
+
+    const { count } = await db
+      .from("appointments")
+      .select("*", { count: "exact", head: true })
+      .eq("company_id", companyId)
+      .gte("start_time", dayStart)
+      .lte("start_time", dayEnd)
+      .in("status", ["BOOKED", "CONFIRMED"]);
+
+    return count ?? 0;
+  }
+
   // ─────────────────────────────────────────────
   // Sessão do chat (estado)
   // ─────────────────────────────────────────────
@@ -302,7 +341,6 @@ export async function POST(req: NextRequest) {
   const ctx: any = session0?.context || {};
 
   async function setSession(nextState: string, nextCtx: any) {
-    // 1) tenta UPDATE
     const upd = await db
       .from("chat_sessions")
       .update({
@@ -319,10 +357,8 @@ export async function POST(req: NextRequest) {
       return;
     }
 
-    // se atualizou, acabou
     if (upd.data && upd.data.length > 0) return;
 
-    // 2) se não existia linha, faz INSERT
     const ins = await db.from("chat_sessions").insert({
       company_id: companyId,
       customer_id: customer.id,
@@ -385,7 +421,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ─────────────────────────────────────────────
-  // ✅ SEMPRE permite reiniciar o fluxo
+  // Reiniciar fluxo
   // ─────────────────────────────────────────────
   if (isIntentReschedule(textRaw)) {
     await clearSession();
@@ -473,7 +509,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ─────────────────────────────────────────────
-  // Confirmação SIM / NÃO (funciona em qualquer estado)
+  // Confirmação SIM / NÃO
   // ─────────────────────────────────────────────
   if (isYesNo(textRaw)) {
     const yn = textRaw === "NAO" ? "NÃO" : textRaw;
@@ -517,8 +553,6 @@ export async function POST(req: NextRequest) {
   // ─────────────────────────────────────────────
   // State machine
   // ─────────────────────────────────────────────
-
-  // ASK_SERVICE
   if (state === "ASK_SERVICE") {
     const choiceRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
     const choice = Number(choiceRaw);
@@ -559,7 +593,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // ASK_DAY
   if (state === "ASK_DAY") {
     const isoDate = parseDayPt(textRaw);
     if (!isoDate) {
@@ -591,13 +624,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    const allSlots = buildSlotsForDay({
+    // ✅ LIMITE DIÁRIO por cliente
+    if (COMPANY_SCHEDULE.dailyLimit.enabled) {
+      const total = await countAppointmentsForDay(isoDate);
+      if (total >= COMPANY_SCHEDULE.dailyLimit.maxAppointments) {
+        await replyAndLog(
+          `📅 A agenda de ${formatDatePt(isoDate)} já está completa.\nEscolha outro dia (ex: AMANHÃ, 10/02).`,
+          { step: "daily_limit_block", isoDate, total }
+        );
+        return NextResponse.json({ ok: true });
+      }
+    }
+
+    let allSlots = buildSlotsForDay({
       isoDate,
       durationMinutes: duration,
       stepMinutes,
       workStart,
       workEnd,
     });
+
+    // ✅ PAUSA DE ALMOÇO por cliente
+    if (COMPANY_SCHEDULE.lunchBreak.enabled) {
+      allSlots = allSlots.filter((s) => !isSlotInLunchBreak(s, isoDate));
+    }
 
     const dayStart = `${isoDate}T00:00:00.000Z`;
     const dayEnd = `${isoDate}T23:59:59.999Z`;
@@ -611,16 +661,15 @@ export async function POST(req: NextRequest) {
       .in("status", ["BOOKED", "CONFIRMED"]);
 
     let free = allSlots.filter((s) => {
-  return !(dayAppts || []).some((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time));
-});
+      return !(dayAppts || []).some((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time));
+    });
 
-// ✅ PASSO 2: se for HOJE em Lisboa, não oferecer horários no passado
-const todayIso = toISODateLisbon(new Date());
-if (isoDate === todayIso) {
-  const nowHHMM = lisbonNowHHMM();
-  free = free.filter((s) => s.label > nowHHMM);
-}
-
+    // ✅ se for HOJE, remove horários no passado
+    const todayIso = toISODateLisbon(new Date());
+    if (isoDate === todayIso) {
+      const nowHHMM = lisbonNowHHMM();
+      free = free.filter((s) => s.label > nowHHMM);
+    }
 
     if (free.length === 0) {
       await replyAndLog("Não há horários disponíveis nesse dia. Escolha outro.", { step: "no_slots" });
@@ -644,9 +693,8 @@ if (isoDate === todayIso) {
     return NextResponse.json({ ok: true });
   }
 
-  // SHOW_SLOTS
   if (state === "SHOW_SLOTS") {
-    const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, ""); // aceita 4️⃣
+    const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
     const n = Number(nRaw);
 
     const slots: any[] = Array.isArray(ctx?.slots) ? ctx.slots : [];
@@ -659,7 +707,6 @@ if (isoDate === todayIso) {
       return NextResponse.json({ ok: true });
     }
 
-    // 4 = mais horários
     if (n === 4) {
       const nextOffset = offset + 3;
       const page = slots.slice(nextOffset, nextOffset + 3);
@@ -682,7 +729,6 @@ if (isoDate === todayIso) {
       return NextResponse.json({ ok: true });
     }
 
-    // escolher 1/2/3
     if (![1, 2, 3].includes(n)) {
       await replyAndLog("Responda 1, 2, 3 ou 4 (mais horários).", { step: "slot_retry" });
       return NextResponse.json({ ok: true });
@@ -694,13 +740,32 @@ if (isoDate === todayIso) {
       return NextResponse.json({ ok: true });
     }
 
-    // reagendar: cancelar antiga
+    // ✅ re-check pausa/limite (anti-bypass)
+    if (COMPANY_SCHEDULE.lunchBreak.enabled && isSlotInLunchBreak(chosen, isoDate)) {
+      await replyAndLog(
+        `⏸️ Esse horário cai na pausa de almoço.\nEscolha outro horário (1, 2, 3) ou 4 para ver mais.`,
+        { step: "lunch_break_recheck_block", isoDate, chosen: chosen.label }
+      );
+      return NextResponse.json({ ok: true });
+    }
+
+    if (COMPANY_SCHEDULE.dailyLimit.enabled) {
+      const total = await countAppointmentsForDay(isoDate);
+      if (total >= COMPANY_SCHEDULE.dailyLimit.maxAppointments) {
+        await clearSession();
+        await replyAndLog(
+          `📅 A agenda de ${formatDatePt(isoDate)} já ficou completa agora.\nEscolha outro dia (ex: AMANHÃ, 10/02).`,
+          { step: "daily_limit_recheck_block", isoDate, total }
+        );
+        return NextResponse.json({ ok: true });
+      }
+    }
+
     const rescheduleFromId = ctx?.reschedule_from_appointment_id ?? null;
     if (ctx?.mode === "RESCHEDULE" && rescheduleFromId) {
       await db.from("appointments").update({ status: "CANCELLED" }).eq("id", rescheduleFromId);
     }
 
-    // criar BOOKED
     const insert = await db
       .from("appointments")
       .insert({
@@ -733,6 +798,5 @@ if (isoDate === todayIso) {
     return NextResponse.json({ ok: true });
   }
 
-  // fallback
   return NextResponse.json({ ok: true });
 }
