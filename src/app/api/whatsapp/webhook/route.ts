@@ -6,6 +6,7 @@ import { sendWhatsApp } from "@/lib/whatsapp/send";
 // ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
+
 const TZ = "Europe/Lisbon";
 
 function onlyDigits(v: string) {
@@ -54,6 +55,30 @@ function toISODateLisbon(date: Date) {
     day: "2-digit",
   });
   return fmt.format(date); // YYYY-MM-DD
+}
+
+/**
+ * NOVO – usado para validar dias de trabalho da empresa
+ * Retorna: 1=Seg ... 7=Dom
+ */
+function isoDayNumberLisbon(isoDate: string): number {
+  const d = new Date(`${isoDate}T12:00:00Z`);
+  const wd = new Intl.DateTimeFormat("en-US", {
+    timeZone: TZ,
+    weekday: "short",
+  }).format(d);
+
+  const map: Record<string, number> = {
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+    Sun: 7,
+  };
+
+  return map[wd] ?? 1;
 }
 
 function stripDiacritics(s: string) {
@@ -513,155 +538,100 @@ if (state === "IDLE") {
   return NextResponse.json({ ok: true });
 }
 
-
-  if (state === "ASK_DAY") {
-    const isoDate = parseDayPt(textRaw);
-    if (!isoDate) {
-      await replyAndLog("Não entendi o dia. Envie: HOJE, AMANHÃ ou 10/02", { step: "day_retry" });
-      return NextResponse.json({ ok: true });
-    }
-
-    const duration = Number(ctx?.duration_minutes) || 30;
-
-    // horários padrão MVP (depois o onboarding vai alimentar isto)
-    const allSlots = buildSlotsForDay({
-      isoDate,
-      durationMinutes: duration,
-      stepMinutes: 30,
-      workStart: "09:00",
-      workEnd: "18:00",
+if (state === "ASK_DAY") {
+  const isoDate = parseDayPt(textRaw);
+  if (!isoDate) {
+    await replyAndLog("Não entendi o dia. Envie: HOJE, AMANHÃ ou 10/02", {
+      step: "day_retry",
     });
-
-    // filtrar slots já ocupados
-    const dayStart = `${isoDate}T00:00:00.000Z`;
-    const dayEnd = `${isoDate}T23:59:59.999Z`;
-
-    const { data: dayAppts } = await db
-      .from("appointments")
-      .select("start_time,end_time,status")
-      .eq("company_id", companyId)
-      .gte("start_time", dayStart)
-      .lte("start_time", dayEnd)
-      .in("status", ["BOOKED", "CONFIRMED"]);
-
-    const free = allSlots.filter((s) => {
-      return !(dayAppts || []).some((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time));
-    });
-
-    if (free.length === 0) {
-      await replyAndLog(`Não há horários disponíveis em ${formatDatePt(isoDate)}. Tente outro dia.`, {
-        step: "no_slots",
-      });
-      return NextResponse.json({ ok: true });
-    }
-
-    const page = free.slice(0, 3);
-    const lines = page.map((s, i) => `${i + 1}) ${formatTimePt(isoDate, s.label)}`).join("\n");
-
-    await setSession("SHOW_SLOTS", {
-      ...ctx,
-      isoDate,
-      offset: 0,
-      slots: free, // guardamos a lista para paginação
-    });
-
-    await replyAndLog(
-      `📅 ${formatDatePt(isoDate)}\nEscolha um horário:\n${lines}\n4) Ver mais horários`,
-      { step: "slots_page_0" }
-    );
-
     return NextResponse.json({ ok: true });
   }
 
-  if (state === "SHOW_SLOTS") {
-    const n = Number(textRaw);
+  const duration = Number(ctx?.duration_minutes) || 30;
 
-    const slots: any[] = Array.isArray(ctx?.slots) ? ctx.slots : [];
-    const isoDate: string | null = ctx?.isoDate ?? null;
-    const offset: number = Number(ctx?.offset) || 0;
+  // ─────────────────────────────
+  // LER CONFIGURAÇÕES DA EMPRESA
+  // ─────────────────────────────
+  const { data: cfg, error: cfgErr } = await db
+    .from("companies")
+    .select("work_start, work_end, slot_step_minutes, work_days")
+    .eq("id", companyId)
+    .maybeSingle();
 
-    if (!isoDate || slots.length === 0) {
-      await clearSession();
-      await replyAndLog("Vamos começar de novo. Envie: QUERO MARCAR", { step: "reset" });
-      return NextResponse.json({ ok: true });
-    }
-
-    // 4 = mais horários
-    if (n === 4) {
-      const nextOffset = offset + 3;
-      const page = slots.slice(nextOffset, nextOffset + 3);
-
-      if (page.length === 0) {
-        await replyAndLog("Não há mais horários. Escolha 1, 2 ou 3 da lista anterior, ou envie outro dia.", {
-          step: "no_more_slots",
-        });
-        return NextResponse.json({ ok: true });
-      }
-
-      const lines = page.map((s, i) => `${i + 1}) ${s.label}`).join("\n");
-
-      await setSession("SHOW_SLOTS", { ...ctx, offset: nextOffset });
-
-      await replyAndLog(
-        `📅 ${formatDatePt(isoDate)}\nMais horários:\n${lines}\n4) Ver mais horários`,
-        { step: `slots_page_${nextOffset}` }
-      );
-      return NextResponse.json({ ok: true });
-    }
-
-    // escolher 1/2/3
-    if (![1, 2, 3].includes(n)) {
-      await replyAndLog("Responda 1, 2, 3 ou 4 (mais horários).", { step: "slot_retry" });
-      return NextResponse.json({ ok: true });
-    }
-
-    const chosen = slots[offset + (n - 1)];
-    if (!chosen) {
-      await replyAndLog("Esse horário não está disponível. Responda 4 para ver mais horários.", {
-        step: "slot_invalid",
-      });
-      return NextResponse.json({ ok: true });
-    }
-
-    // Se for reagendar: cancelar marcação antiga (se existir)
-    const rescheduleFromId = ctx?.reschedule_from_appointment_id ?? null;
-    if (ctx?.mode === "RESCHEDULE" && rescheduleFromId) {
-      await db.from("appointments").update({ status: "CANCELLED" }).eq("id", rescheduleFromId);
-    }
-
-    // Criar appointment BOOKED
-    const insert = await db
-      .from("appointments")
-      .insert({
-        company_id: companyId,
-        customer_id: customer.id,
-        start_time: chosen.startISO,
-        end_time: chosen.endISO,
-        status: "BOOKED",
-        customer_name_snapshot: customer.name ?? null,
-        service_id: ctx?.service_id ?? null,
-        service_name_snapshot: ctx?.service_name ?? null,
-        service_duration_minutes_snapshot: Number(ctx?.duration_minutes) || null,
-      })
-      .select("id,start_time")
-      .single();
-
-    const appt = insert.data;
-
-    await setSession("WAIT_CONFIRM", {
-      mode: ctx?.mode ?? "NEW",
-      pending_appointment_id: appt?.id ?? null,
+  if (cfgErr || !cfg) {
+    await replyAndLog("Erro ao carregar horários da empresa.", {
+      step: "cfg_error",
     });
-
-    const svcLine = ctx?.service_name ? `\nServiço: ${ctx.service_name}` : "";
-    await replyAndLog(
-      `✅ Reservei para ${formatDatePt(isoDate)} às ${chosen.label}.${svcLine}\nConfirma? Responda SIM ou NÃO.`,
-      { step: "confirm", appointment_id: appt?.id ?? null }
-    );
-
     return NextResponse.json({ ok: true });
   }
 
-  // Qualquer coisa fora do fluxo
+  const workStart = cfg.work_start ?? "09:00";
+  const workEnd = cfg.work_end ?? "18:00";
+  const stepMinutes = Number(cfg.slot_step_minutes ?? 30);
+  const workDays: number[] = cfg.work_days ?? [1, 2, 3, 4, 5];
+
+  // validar dia da semana
+  const dayNum = isoDayNumberLisbon(isoDate);
+  if (!workDays.includes(dayNum)) {
+    await replyAndLog(
+      "Não atendemos nesse dia. Escolha outro dia.",
+      { step: "day_not_allowed", isoDate }
+    );
+    return NextResponse.json({ ok: true });
+  }
+
+  // ─────────────────────────────
+  // GERAR HORÁRIOS DISPONÍVEIS
+  // ─────────────────────────────
+  const allSlots = buildSlotsForDay({
+    isoDate,
+    durationMinutes: duration,
+    stepMinutes,
+    workStart,
+    workEnd,
+  });
+
+  const dayStart = `${isoDate}T00:00:00.000Z`;
+  const dayEnd = `${isoDate}T23:59:59.999Z`;
+
+  const { data: dayAppts } = await db
+    .from("appointments")
+    .select("start_time,end_time,status")
+    .eq("company_id", companyId)
+    .gte("start_time", dayStart)
+    .lte("start_time", dayEnd)
+    .in("status", ["BOOKED", "CONFIRMED"]);
+
+  const free = allSlots.filter((s) => {
+    return !(dayAppts || []).some((a: any) =>
+      overlaps(s.startISO, s.endISO, a.start_time, a.end_time)
+    );
+  });
+
+  if (free.length === 0) {
+    await replyAndLog(
+      "Não há horários disponíveis nesse dia. Escolha outro.",
+      { step: "no_slots" }
+    );
+    return NextResponse.json({ ok: true });
+  }
+
+  const page = free.slice(0, 3);
+  const lines = page
+    .map((s, i) => `${i + 1}) ${s.label}`)
+    .join("\n");
+
+  await setSession("SHOW_SLOTS", {
+    ...ctx,
+    isoDate,
+    offset: 0,
+    slots: free,
+  });
+
+  await replyAndLog(
+    `📅 ${formatDatePt(isoDate)}\nEscolha um horário:\n${lines}\n4) Ver mais horários`,
+    { step: "slots_page_0" }
+  );
+
   return NextResponse.json({ ok: true });
 }
