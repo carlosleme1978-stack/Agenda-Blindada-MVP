@@ -341,93 +341,89 @@ export async function POST(req: NextRequest) {
   // ─────────────────────────────────────────────
   // Intents globais só quando IDLE
   // ─────────────────────────────────────────────
-  if (state === "IDLE") {
-    if (isIntentReschedule(textRaw)) {
-      const { data: nextAppt } = await db
-        .from("appointments")
-        .select("id,status,start_time")
-        .eq("company_id", companyId)
-        .eq("customer_id", customer.id)
-        .in("status", ["BOOKED", "CONFIRMED"])
-        .gte("start_time", new Date().toISOString())
-        .order("start_time", { ascending: true })
-        .limit(1)
-        .maybeSingle();
+  // ✅ Sempre permite reiniciar o fluxo, mesmo se estiver preso em outro estado
+if (isIntentReschedule(textRaw)) {
+  await clearSession();
 
-      await setSession("ASK_SERVICE", {
-        mode: "RESCHEDULE",
-        reschedule_from_appointment_id: nextAppt?.id ?? null,
-        offset: 0,
-      });
+  const { data: nextAppt } = await db
+    .from("appointments")
+    .select("id,status,start_time")
+    .eq("company_id", companyId)
+    .eq("customer_id", customer.id)
+    .in("status", ["BOOKED", "CONFIRMED"])
+    .gte("start_time", new Date().toISOString())
+    .order("start_time", { ascending: true })
+    .limit(1)
+    .maybeSingle();
 
-      const { data: services } = await db
-        .from("services")
-        .select("id,name,duration_minutes")
-        .eq("company_id", companyId)
-        .eq("active", true)
-        .order("created_at", { ascending: true })
-        .limit(10);
+  await setSession("ASK_SERVICE", {
+    mode: "RESCHEDULE",
+    reschedule_from_appointment_id: nextAppt?.id ?? null,
+    offset: 0,
+  });
 
-      if (services && services.length > 0) {
-        const lines = services
-          .slice(0, 3)
-          .map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+  const { data: services } = await db
+    .from("services")
+    .select("id,name,duration_minutes")
+    .eq("company_id", companyId)
+    .eq("active", true)
+    .order("created_at", { ascending: true })
+    .limit(10);
 
-        await replyAndLog(
-          `🔁 Reagendar\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`,
-          { flow: "reschedule", step: "service" }
-        );
-      } else {
-        await setSession("ASK_DAY", {
-          mode: "RESCHEDULE",
-          reschedule_from_appointment_id: nextAppt?.id ?? null,
-          service_id: null,
-          duration_minutes: 30,
-          offset: 0,
-        });
+  if (services && services.length > 0) {
+    const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+    await replyAndLog(
+      `🔁 Reagendar\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`,
+      { flow: "reschedule", step: "service" }
+    );
+  } else {
+    await setSession("ASK_DAY", {
+      mode: "RESCHEDULE",
+      reschedule_from_appointment_id: nextAppt?.id ?? null,
+      service_id: null,
+      duration_minutes: 30,
+      offset: 0,
+    });
 
-        await replyAndLog("🔁 Reagendar\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)", {
-          flow: "reschedule",
-          step: "day",
-        });
-      }
-
-      return NextResponse.json({ ok: true });
-    }
-
-    if (isIntentMark(textRaw)) {
-      await setSession("ASK_SERVICE", { mode: "NEW", offset: 0 });
-
-      const { data: services } = await db
-        .from("services")
-        .select("id,name,duration_minutes")
-        .eq("company_id", companyId)
-        .eq("active", true)
-        .order("created_at", { ascending: true })
-        .limit(10);
-
-      if (services && services.length > 0) {
-        const lines = services
-          .slice(0, 3)
-          .map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-
-        await replyAndLog(
-          `📅 Marcação\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`,
-          { flow: "new", step: "service" }
-        );
-      } else {
-        await setSession("ASK_DAY", { mode: "NEW", service_id: null, duration_minutes: 30, offset: 0 });
-
-        await replyAndLog("📅 Marcação\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)", {
-          flow: "new",
-          step: "day",
-        });
-      }
-
-      return NextResponse.json({ ok: true });
-    }
+    await replyAndLog("🔁 Reagendar\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)", {
+      flow: "reschedule",
+      step: "day",
+    });
   }
 
+  return NextResponse.json({ ok: true });
+}
+
+if (isIntentMark(textRaw)) {
+  await clearSession();
+
+  await setSession("ASK_SERVICE", { mode: "NEW", offset: 0 });
+
+  const { data: services } = await db
+    .from("services")
+    .select("id,name,duration_minutes")
+    .eq("company_id", companyId)
+    .eq("active", true)
+    .order("created_at", { ascending: true })
+    .limit(10);
+
+  if (services && services.length > 0) {
+    const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+    await replyAndLog(
+      `📅 Marcação\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`,
+      { flow: "new", step: "service" }
+    );
+  } else {
+    await setSession("ASK_DAY", { mode: "NEW", service_id: null, duration_minutes: 30, offset: 0 });
+
+    await replyAndLog("📅 Marcação\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)", {
+      flow: "new",
+      step: "day",
+    });
+  }
+
+  return NextResponse.json({ ok: true });
+}
   // ─────────────────────────────────────────────
   // Confirmação SIM / NÃO (funciona em qualquer estado)
   // ─────────────────────────────────────────────
