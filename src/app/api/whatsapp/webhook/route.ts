@@ -1,3 +1,4 @@
+
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendWhatsApp } from "@/lib/whatsapp/send";
@@ -18,6 +19,11 @@ function normalizeInboundText(v: string) {
     .replace(/\s+/g, " ")
     .trim()
     .toUpperCase();
+}
+
+function stripDiacritics(s: string) {
+  // remove acentos (AMANHÃ -> AMANHA)
+  return s.normalize("NFD").replace(/\p{Diacritic}/gu, "");
 }
 
 function isIntentMark(text: string) {
@@ -77,11 +83,6 @@ function isoDayNumberLisbon(isoDate: string): number {
   };
 
   return map[wd] ?? 1;
-}
-
-function stripDiacritics(s: string) {
-  // remove acentos (AMANHÃ -> AMANHA)
-  return s.normalize("NFD").replace(/\p{Diacritic}/gu, "");
 }
 
 function parseDayPt(text: string): string | null {
@@ -162,6 +163,23 @@ function buildSlotsForDay(params: {
   }
 
   return slots;
+}
+
+function lisbonNowHHMM(): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+
+  const hh = parts.find((p) => p.type === "hour")?.value ?? "00";
+  const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
+  return `${hh}:${mm}`;
+}
+
+function lisbonTodayIso(): string {
+  return toISODateLisbon(new Date());
 }
 
 // ─────────────────────────────────────────────
@@ -338,92 +356,122 @@ export async function POST(req: NextRequest) {
     if (ins.error) console.error("message_log outbound insert error:", ins.error);
   }
 
+  async function maybeWarnOutsideHours(flow: "new" | "reschedule") {
+    const { data: cfg } = await db
+      .from("companies")
+      .select("work_start, work_end, work_days")
+      .eq("id", companyId)
+      .maybeSingle();
+
+    const workStart = cfg?.work_start ?? "09:00";
+    const workEnd = cfg?.work_end ?? "18:00";
+    const workDays: number[] = (cfg?.work_days as any) ?? [1, 2, 3, 4, 5];
+
+    const nowHHMM = lisbonNowHHMM();
+    const todayIso = lisbonTodayIso();
+    const dayNum = isoDayNumberLisbon(todayIso);
+
+    const dayOk = workDays.includes(dayNum);
+    const timeOk = nowHHMM >= workStart && nowHHMM <= workEnd;
+
+    if (!dayOk || !timeOk) {
+      const msg =
+        flow === "new"
+          ? `⏱️ Estamos fora do horário de atendimento agora.\nMas você pode agendar normalmente aqui.`
+          : `⏱️ Estamos fora do horário de atendimento agora.\nMas você pode reagendar normalmente aqui.`;
+
+      await replyAndLog(msg, { step: "outside_hours_notice" });
+    }
+  }
+
   // ─────────────────────────────────────────────
-  // Intents globais só quando IDLE
+  // ✅ SEMPRE permite reiniciar o fluxo
   // ─────────────────────────────────────────────
-  // ✅ Sempre permite reiniciar o fluxo, mesmo se estiver preso em outro estado
-if (isIntentReschedule(textRaw)) {
-  await clearSession();
+  if (isIntentReschedule(textRaw)) {
+    await clearSession();
+    await maybeWarnOutsideHours("reschedule");
 
-  const { data: nextAppt } = await db
-    .from("appointments")
-    .select("id,status,start_time")
-    .eq("company_id", companyId)
-    .eq("customer_id", customer.id)
-    .in("status", ["BOOKED", "CONFIRMED"])
-    .gte("start_time", new Date().toISOString())
-    .order("start_time", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    const { data: nextAppt } = await db
+      .from("appointments")
+      .select("id,status,start_time")
+      .eq("company_id", companyId)
+      .eq("customer_id", customer.id)
+      .in("status", ["BOOKED", "CONFIRMED"])
+      .gte("start_time", new Date().toISOString())
+      .order("start_time", { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
-  await setSession("ASK_SERVICE", {
-    mode: "RESCHEDULE",
-    reschedule_from_appointment_id: nextAppt?.id ?? null,
-    offset: 0,
-  });
-
-  const { data: services } = await db
-    .from("services")
-    .select("id,name,duration_minutes")
-    .eq("company_id", companyId)
-    .eq("active", true)
-    .order("created_at", { ascending: true })
-    .limit(10);
-
-  if (services && services.length > 0) {
-    const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-    await replyAndLog(
-      `🔁 Reagendar\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`,
-      { flow: "reschedule", step: "service" }
-    );
-  } else {
-    await setSession("ASK_DAY", {
+    await setSession("ASK_SERVICE", {
       mode: "RESCHEDULE",
       reschedule_from_appointment_id: nextAppt?.id ?? null,
-      service_id: null,
-      duration_minutes: 30,
       offset: 0,
     });
 
-    await replyAndLog("🔁 Reagendar\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)", {
-      flow: "reschedule",
-      step: "day",
-    });
+    const { data: services } = await db
+      .from("services")
+      .select("id,name,duration_minutes")
+      .eq("company_id", companyId)
+      .eq("active", true)
+      .order("created_at", { ascending: true })
+      .limit(10);
+
+    if (services && services.length > 0) {
+      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+      await replyAndLog(
+        `🔁 Reagendar\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`,
+        { flow: "reschedule", step: "service" }
+      );
+    } else {
+      await setSession("ASK_DAY", {
+        mode: "RESCHEDULE",
+        reschedule_from_appointment_id: nextAppt?.id ?? null,
+        service_id: null,
+        duration_minutes: 30,
+        offset: 0,
+      });
+
+      await replyAndLog("🔁 Reagendar\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)", {
+        flow: "reschedule",
+        step: "day",
+      });
+    }
+
+    return NextResponse.json({ ok: true });
   }
 
-  return NextResponse.json({ ok: true });
-}
+  if (isIntentMark(textRaw)) {
+    await clearSession();
+    await maybeWarnOutsideHours("new");
 
-if (isIntentMark(textRaw)) {
-  await clearSession();
+    await setSession("ASK_SERVICE", { mode: "NEW", offset: 0 });
 
-  await setSession("ASK_SERVICE", { mode: "NEW", offset: 0 });
+    const { data: services } = await db
+      .from("services")
+      .select("id,name,duration_minutes")
+      .eq("company_id", companyId)
+      .eq("active", true)
+      .order("created_at", { ascending: true })
+      .limit(10);
 
-  const { data: services } = await db
-    .from("services")
-    .select("id,name,duration_minutes")
-    .eq("company_id", companyId)
-    .eq("active", true)
-    .order("created_at", { ascending: true })
-    .limit(10);
+    if (services && services.length > 0) {
+      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+      await replyAndLog(
+        `📅 Marcação\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`,
+        { flow: "new", step: "service" }
+      );
+    } else {
+      await setSession("ASK_DAY", { mode: "NEW", service_id: null, duration_minutes: 30, offset: 0 });
 
-  if (services && services.length > 0) {
-    const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-    await replyAndLog(
-      `📅 Marcação\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`,
-      { flow: "new", step: "service" }
-    );
-  } else {
-    await setSession("ASK_DAY", { mode: "NEW", service_id: null, duration_minutes: 30, offset: 0 });
+      await replyAndLog("📅 Marcação\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)", {
+        flow: "new",
+        step: "day",
+      });
+    }
 
-    await replyAndLog("📅 Marcação\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)", {
-      flow: "new",
-      step: "day",
-    });
+    return NextResponse.json({ ok: true });
   }
 
-  return NextResponse.json({ ok: true });
-}
   // ─────────────────────────────────────────────
   // Confirmação SIM / NÃO (funciona em qualquer estado)
   // ─────────────────────────────────────────────
@@ -590,8 +638,7 @@ if (isIntentMark(textRaw)) {
 
   // SHOW_SLOTS
   if (state === "SHOW_SLOTS") {
-    // aceita "4", "4 ", "4️⃣" etc.
-    const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
+    const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, ""); // aceita 4️⃣
     const n = Number(nRaw);
 
     const slots: any[] = Array.isArray(ctx?.slots) ? ctx.slots : [];
@@ -610,10 +657,9 @@ if (isIntentMark(textRaw)) {
       const page = slots.slice(nextOffset, nextOffset + 3);
 
       if (page.length === 0) {
-        await replyAndLog(
-          "Não há mais horários. Escolha 1, 2 ou 3 da lista anterior, ou envie outro dia.",
-          { step: "no_more_slots" }
-        );
+        await replyAndLog("Não há mais horários. Escolha 1, 2 ou 3 da lista anterior, ou envie outro dia.", {
+          step: "no_more_slots",
+        });
         return NextResponse.json({ ok: true });
       }
 
@@ -682,4 +728,3 @@ if (isIntentMark(textRaw)) {
   // fallback
   return NextResponse.json({ ok: true });
 }
-
