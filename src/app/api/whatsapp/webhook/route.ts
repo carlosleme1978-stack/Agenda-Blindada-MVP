@@ -610,9 +610,17 @@ export async function POST(req: NextRequest) {
       .lte("start_time", dayEnd)
       .in("status", ["BOOKED", "CONFIRMED"]);
 
-    const free = allSlots.filter((s) => {
-      return !(dayAppts || []).some((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time));
-    });
+    let free = allSlots.filter((s) => {
+  return !(dayAppts || []).some((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time));
+});
+
+// ✅ PASSO 2: se for HOJE em Lisboa, não oferecer horários no passado
+const todayIso = toISODateLisbon(new Date());
+if (isoDate === todayIso) {
+  const nowHHMM = lisbonNowHHMM();
+  free = free.filter((s) => s.label > nowHHMM);
+}
+
 
     if (free.length === 0) {
       await replyAndLog("Não há horários disponíveis nesse dia. Escolha outro.", { step: "no_slots" });
