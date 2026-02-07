@@ -16,6 +16,25 @@ type AppointmentRow = {
 
 type StatusFilter = "ALL" | "CONFIRMED" | "PENDING" | "CANCELLED";
 
+function lisbonYMD(d: Date) {
+  // YYYY-MM-DD in Europe/Lisbon
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Lisbon",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+function addDaysLisbon(base: Date, days: number) {
+  const d = new Date(base.getTime());
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
 function formatDateTimeLisbon(iso: string) {
   const dt = new Date(iso);
   const date = dt.toLocaleDateString("pt-PT", { timeZone: "Europe/Lisbon" });
@@ -25,6 +44,19 @@ function formatDateTimeLisbon(iso: string) {
     minute: "2-digit",
   });
   return { date, time };
+}
+
+/** ✅ NOVO: “agora” real em Europe/Lisbon */
+function nowLisbonDate() {
+  return new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Lisbon" }));
+}
+function diffMinutes(from: Date, to: Date) {
+  return Math.round((to.getTime() - from.getTime()) / 60000);
+}
+function humanEta(mins: number) {
+  if (mins === 0) return "agora";
+  if (mins > 0) return `em ${mins} min`;
+  return `há ${Math.abs(mins)} min`;
 }
 
 function normalizeStatus(s: string) {
@@ -304,6 +336,95 @@ export default function DashboardClient() {
 
   const activeChip = (v: StatusFilter) => (v === filter ? "chip active" : "chip");
 
+  const nowLisbon = useMemo(() => new Date(), []);
+  const todayYmd = useMemo(() => lisbonYMD(nowLisbon), [nowLisbon]);
+  const tomorrowYmd = useMemo(() => lisbonYMD(addDaysLisbon(nowLisbon, 1)), [nowLisbon]);
+
+  // ✅ Apenas hoje/amanhã/depois (sem passado no dashboard)
+  const grouped = useMemo(() => {
+    const today: any[] = [];
+    const tomorrow: any[] = [];
+    const after: any[] = [];
+
+    const nowMs = Date.now();
+    for (const a of filtered as any[]) {
+      const ms = a._startMs ?? new Date(a.start_time).getTime();
+      if (ms < nowMs - 60 * 1000) continue; // ignora passado (com 1min de tolerância)
+      const ymd = lisbonYMD(new Date(a.start_time));
+      if (ymd === todayYmd) today.push(a);
+      else if (ymd === tomorrowYmd) tomorrow.push(a);
+      else after.push(a);
+    }
+
+    // Ordena cada grupo por horário
+    const byTime = (x: any, y: any) => (x._startMs ?? 0) - (y._startMs ?? 0);
+    today.sort(byTime);
+    tomorrow.sort(byTime);
+    after.sort(byTime);
+
+    return { today, tomorrow, after };
+  }, [filtered, todayYmd, tomorrowYmd]);
+
+  const { today, tomorrow, after } = grouped;
+
+  /** ✅ NOVO: Próxima marcação (a mais próxima futura) + ETA */
+  const nextAppointment = useMemo(() => {
+    const nowMs = nowLisbonDate().getTime();
+    const all = [...today, ...tomorrow, ...after]
+      .filter((a: any) => (a._startMs ?? new Date(a.start_time).getTime()) >= nowMs)
+      .sort((a: any, b: any) => (a._startMs ?? 0) - (b._startMs ?? 0));
+    return all[0] ?? null;
+  }, [today, tomorrow, after]);
+
+  const nextEtaLabel = useMemo(() => {
+    if (!nextAppointment) return null;
+    const mins = diffMinutes(nowLisbonDate(), new Date(nextAppointment.start_time));
+    return humanEta(mins);
+  }, [nextAppointment]);
+
+  const renderTable = (list: any[]) => (
+    <div className="tableWrap">
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Início</th>
+            <th>Cliente</th>
+            <th>Telefone</th>
+            <th style={{ textAlign: "right" }}>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {list.length === 0 ? (
+            <tr>
+              <td colSpan={4} className="empty">
+                Sem marcações.
+              </td>
+            </tr>
+          ) : (
+            list.map((a: any) => {
+              const { date, time } = formatDateTimeLisbon(a.start_time);
+              const tone = statusTone(a.status);
+              const label = statusLabelPT(a.status);
+
+              return (
+                <tr key={a.id}>
+                  <td className="mono">
+                    {date} às {time}
+                  </td>
+                  <td className="strong">{a._displayName}</td>
+                  <td className="mono">{a._phone}</td>
+                  <td style={{ textAlign: "right" }}>
+                    <span className={`badge ${tone}`}>{label}</span>
+                  </td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+
   if (loading) {
     return (
       <div className="wrap">
@@ -346,9 +467,15 @@ export default function DashboardClient() {
               <p className="sub">Visão geral das marcações e confirmações via WhatsApp.</p>
             </div>
             <div className="actions">
-              <Link className="btn" href="/dashboard/new">+ Nova marcação</Link>
-              <Link className="btn ghost" href="/dashboard/billing">Faturação</Link>
-              <button className="btn ghost" onClick={signOut}>Sair</button>
+              <Link className="btn" href="/dashboard/new">
+                + Nova marcação
+              </Link>
+              <Link className="btn ghost" href="/dashboard/billing">
+                Faturação
+              </Link>
+              <button className="btn ghost" onClick={signOut}>
+                Sair
+              </button>
             </div>
           </div>
 
@@ -375,8 +502,21 @@ export default function DashboardClient() {
       <div className="topBar">
         <div className="brand">Agenda Blindada</div>
         <div className="topLinks">
-          <Link className="topLink" href="/dashboard">Dashboard</Link>
-          <Link className="topLink" href="/dashboard/new">Nova marcação</Link>
+          <Link className="topLink" href="/dashboard">
+            Hoje
+          </Link>
+          <Link className="topLink" href="/dashboard/new">
+            Nova marcação
+          </Link>
+          <Link className="topLink" href="/dashboard/services">
+            Serviços
+          </Link>
+          <Link className="topLink" href="/dashboard/staff">
+            Staff
+          </Link>
+          <Link className="topLink" href="/dashboard/settings">
+            Settings
+          </Link>
         </div>
       </div>
 
@@ -387,19 +527,33 @@ export default function DashboardClient() {
             <p className="sub">Visão geral das marcações e confirmações via WhatsApp.</p>
           </div>
           <div className="actions">
-            <Link className="btn" href="/dashboard/new">+ Nova marcação</Link>
-            <Link className="btn ghost" href="/dashboard/billing">Faturação</Link>
-            <button className="btn ghost" onClick={signOut}>Sair</button>
+            <Link className="btn" href="/dashboard/new">
+              + Nova marcação
+            </Link>
+            <Link className="btn ghost" href="/dashboard/billing">
+              Faturação
+            </Link>
+            <button className="btn ghost" onClick={signOut}>
+              Sair
+            </button>
           </div>
         </div>
 
         {/* ✅ B: barra premium de filtros + busca */}
         <div className="toolbar">
           <div className="chips">
-            <button className={activeChip("ALL")} onClick={() => setFilter("ALL")}>Todas</button>
-            <button className={activeChip("CONFIRMED")} onClick={() => setFilter("CONFIRMED")}>Confirmadas</button>
-            <button className={activeChip("PENDING")} onClick={() => setFilter("PENDING")}>Pendentes</button>
-            <button className={activeChip("CANCELLED")} onClick={() => setFilter("CANCELLED")}>Canceladas</button>
+            <button className={activeChip("ALL")} onClick={() => setFilter("ALL")}>
+              Todas
+            </button>
+            <button className={activeChip("CONFIRMED")} onClick={() => setFilter("CONFIRMED")}>
+              Confirmadas
+            </button>
+            <button className={activeChip("PENDING")} onClick={() => setFilter("PENDING")}>
+              Pendentes
+            </button>
+            <button className={activeChip("CANCELLED")} onClick={() => setFilter("CANCELLED")}>
+              Canceladas
+            </button>
           </div>
 
           <div className="searchWrap">
@@ -409,7 +563,9 @@ export default function DashboardClient() {
               onChange={(e) => setQ(e.target.value)}
               placeholder="Buscar por cliente ou telefone…"
             />
-            <button className="btn ghost" onClick={refresh}>Atualizar</button>
+            <button className="btn ghost" onClick={refresh}>
+              Atualizar
+            </button>
           </div>
         </div>
 
@@ -436,13 +592,39 @@ export default function DashboardClient() {
           </div>
         </div>
 
+        {/* ✅ NOVO: Próxima marcação (card) */}
+        <div className="card nextCard">
+          <div>
+            <div className="cardLabel">Próxima marcação</div>
+
+            {!nextAppointment ? (
+              <div className="nextBig">Nenhuma marcada ✅</div>
+            ) : (
+              <>
+                <div className="nextBig">
+                  {formatDateTimeLisbon(nextAppointment.start_time).date} às{" "}
+                  {formatDateTimeLisbon(nextAppointment.start_time).time} —{" "}
+                  {nextAppointment._displayName}
+                </div>
+                <div className="nextSmall">
+                  {statusLabelPT(nextAppointment.status)}
+                  {nextEtaLabel ? ` · ${nextEtaLabel}` : ""}
+                </div>
+              </>
+            )}
+          </div>
+
+          {nextAppointment ? (
+            <span className={`badge ${statusTone(nextAppointment.status)}`}>
+              {statusLabelPT(nextAppointment.status)}
+            </span>
+          ) : null}
+        </div>
+
         <div className="panel">
           <div className="panelHead">
             <div>
-              <div className="panelTitle">Próximas marcações</div>
-              <div className="panelSub">
-                Futuras aparecem primeiro • {filtered.length} itens
-              </div>
+              <div className="panelTitle">Marcações</div>
             </div>
 
             <div className="panelRight">
@@ -454,43 +636,28 @@ export default function DashboardClient() {
             </div>
           </div>
 
-          <div className="tableWrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Início</th>
-                  <th>Cliente</th>
-                  <th>Telefone</th>
-                  <th style={{ textAlign: "right" }}>Estado</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="empty">
-                      Nenhuma marcação encontrada para este filtro/busca.
-                    </td>
-                  </tr>
-                ) : (
-                  filtered.map((a) => {
-                    const { date, time } = formatDateTimeLisbon(a.start_time);
-                    const tone = statusTone(a.status);
-                    const label = statusLabelPT(a.status);
+          <div className="section">
+            <div className="sectionHead">
+              <div className="sectionTitle">Hoje</div>
+              <div className="sectionSub">{todayYmd}</div>
+            </div>
+            {renderTable(today)}
+          </div>
 
-                    return (
-                      <tr key={a.id}>
-                        <td className="mono">{date} às {time}</td>
-                        <td className="strong">{(a as any)._displayName}</td>
-                        <td className="mono">{(a as any)._phone}</td>
-                        <td style={{ textAlign: "right" }}>
-                          <span className={`badge ${tone}`}>{label}</span>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+          <div className="section">
+            <div className="sectionHead">
+              <div className="sectionTitle">Amanhã</div>
+              <div className="sectionSub">{tomorrowYmd}</div>
+            </div>
+            {renderTable(tomorrow)}
+          </div>
+
+          <div className="section">
+            <div className="sectionHead">
+              <div className="sectionTitle">Depois</div>
+              <div className="sectionSub">Próximos dias</div>
+            </div>
+            {renderTable(after)}
           </div>
         </div>
 
@@ -674,12 +841,16 @@ h1{
   border-radius:18px;
   padding:14px 14px;
   box-shadow: 0 18px 40px rgba(15,23,42,0.06);
+      margin-left:20px;
+
 }
 
 .cardLabel{
   font-size:13px;
   color: rgba(15,23,42,0.65);
   font-weight:700;
+      margin-left:20px;
+
 }
 
 .cardValue{
@@ -687,20 +858,25 @@ h1{
   font-weight:900;
   margin-top:6px;
   letter-spacing:-0.03em;
+  margin-left:20px;
+
 }
 
 .cardHint{
-  margin-top:6px;
+  margin-top:10px;
   font-size:12px;
   color: rgba(15,23,42,0.60);
+  margin-left:20px;
+
 }
 
 .panel{
   background: rgba(255,255,255,0.86);
   border:1px solid rgba(15,23,42,0.06);
   border-radius:18px;
-  box-shadow: 0 18px 40px rgba(15,23,42,0.06);
+  box-shadow: 0 18px 40px rgba(3, 15, 45, 0.06);
   overflow:hidden;
+
 }
 
 .panelHead{
@@ -709,27 +885,34 @@ h1{
   justify-content:space-between;
   gap:12px;
   padding:14px 14px;
-  border-bottom:1px solid rgba(15,23,42,0.06);
+  border-bottom:1px solid rgba(62, 115, 237, 0.06);
+    margin-left:20px;
+
 }
 
 .panelTitle{
   font-weight:900;
-  letter-spacing:-0.02em;
+  letter-spacing:-0.10em;
+  
 }
 
 .panelSub{
   margin-top:3px;
   font-size:12px;
-  color: rgba(15,23,42,0.65);
+  color: rgba(25, 172, 167, 0.65);
+  margin-left:20px;
 }
 
 .panelRight{
   display:flex;
   align-items:center;
   gap:10px;
+    margin-left:20px;
+
 }
 
-.panelBody{ padding:14px; }
+.panelBody{ padding:14px; 
+  }
 
 .tableWrap{
   width:100%;
@@ -756,7 +939,7 @@ h1{
   padding:14px 14px;
   border-top:1px solid rgba(15,23,42,0.06);
   font-size:14px;
-  color: rgba(15,23,42,0.92);
+  color: rgba(15, 17, 13, 0.92);
 }
 
 .table tbody tr:hover{
@@ -835,6 +1018,10 @@ h1{
   100%{ background-position: 100% 0%; }
 }
 
+.section{margin-top:14px;}
+.sectionTitle{font-weight:900; }
+.sectionSub{font-size:12px;color:rgba(15,23,42,0.55);}
+
 .footerSpace{ height: 40px; }
 
 @media (max-width: 980px){
@@ -851,5 +1038,26 @@ h1{
   .topLinks{ display:none; }
   .search{ width:100%; min-width: unset; }
   .searchWrap{ width:100%; justify-content: stretch; }
+}
+
+/* ✅ NOVO: estilos do card “Próxima marcação” */
+.nextCard{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  margin: 10px 0 14px;
+}
+.nextBig{
+  font-size:16px;
+  font-weight:900;
+  letter-spacing:-0.01em;
+  margin-top:6px;
+}
+.nextSmall{
+  margin-top:6px;
+  font-size:12px;
+  color: rgba(15,23,42,0.65);
+  font-weight:700;
 }
 `;

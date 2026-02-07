@@ -123,3 +123,41 @@ select a.id,a.company_id,a.start_time,a.end_time,a.status,c.phone as customer_ph
 from public.appointments a join public.customers c on c.id=a.customer_id;
 
 grant select on public.v_appointments_dashboard to anon, authenticated;
+
+-- =========================
+-- V2: Services + Staff (needed by the current app UI)
+-- =========================
+
+create table if not exists public.services (
+  id uuid primary key default uuid_generate_v4(),
+  company_id uuid not null references public.companies(id) on delete cascade,
+  name text not null,
+  duration_minutes int not null default 30,
+  price_cents int null,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.staff (
+  id uuid primary key default uuid_generate_v4(),
+  company_id uuid not null references public.companies(id) on delete cascade,
+  name text not null,
+  phone text null,
+  role text not null default 'staff',
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+-- Optional columns used across the dashboard/new booking flows
+alter table public.appointments add column if not exists service_id uuid null references public.services(id) on delete set null;
+alter table public.appointments add column if not exists staff_id uuid null references public.staff(id) on delete set null;
+alter table public.appointments add column if not exists customer_name_snapshot text null;
+
+alter table public.services enable row level security;
+alter table public.staff enable row level security;
+
+create policy if not exists "services_rw" on public.services
+for all using (company_id = public.current_company_id()) with check (company_id = public.current_company_id());
+
+create policy if not exists "staff_rw" on public.staff
+for all using (company_id = public.current_company_id()) with check (company_id = public.current_company_id());
