@@ -304,8 +304,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  const rawFrom: string = message.from;
-  const fromDigits = onlyDigits(rawFrom);
+  // ─────────────────────────────────────────────
+  // Identificar corretamente: quem enviou (cliente) e para qual número da empresa (destino)
+  // WhatsApp Cloud API costuma trazer o cliente em value.contacts[0].wa_id e o número da empresa em value.metadata.display_phone_number
+  const metaDisplay: string | undefined = value?.metadata?.display_phone_number;
+  const metaPhoneId: string | undefined = value?.metadata?.phone_number_id;
+  const businessDigits = metaDisplay ? onlyDigits(metaDisplay) : null;
+  const contactWaid: string | undefined = value?.contacts?.[0]?.wa_id;
+  const rawSender: string = contactWaid || message.from;
+  let rawFrom: string = rawSender;
+  let fromDigits = onlyDigits(rawSender);
+
+  // Se por algum motivo o provider mandar "from" como o número da empresa,
+  // tentamos usar message.to como cliente (quando disponível).
+  const maybeTo: any = (message as any).to;
+  if (businessDigits && fromDigits === businessDigits && maybeTo) {
+    const alt = onlyDigits(String(maybeTo));
+    if (alt && alt !== businessDigits) {
+      // sobrescreve (cliente real)
+      // @ts-ignore
+      rawFrom = String(maybeTo);
+      // @ts-ignore
+      fromDigits = alt;
+    }
+  }
+
   const textRaw = normalizeInboundText(message.text.body);
   const text = stripDiacritics(textRaw);
   const waMessageId: string | undefined = message.id;
@@ -343,6 +366,31 @@ export async function POST(req: NextRequest) {
   // ─────────────────────────────────────────────
   // Encontrar customer e company
   // ─────────────────────────────────────────────
+
+  // ─────────────────────────────────────────────
+  // Resolver company pelo número destino (recomendado em multi-tenant)
+  // Se não existir coluna/ajuste no banco, cai no fallback (primeira company)
+  // ─────────────────────────────────────────────
+  async function resolveCompanyId(): Promise<string | null> {
+    // 1) Tenta por phone_number_id (Cloud API)
+    if (metaPhoneId) {
+      const r = await db.from("companies").select("id").eq("wa_phone_number_id", metaPhoneId).limit(1).maybeSingle();
+      if (!r.error && r.data?.id) return r.data.id;
+    }
+
+    // 2) Tenta por display_phone_number (E.164 digits)
+    if (businessDigits) {
+      const r2 = await db.from("companies").select("id").eq("whatsapp_phone", businessDigits).limit(1).maybeSingle();
+      if (!r2.error && r2.data?.id) return r2.data.id;
+
+      const r3 = await db.from("companies").select("id").eq("phone", businessDigits).limit(1).maybeSingle();
+      if (!r3.error && r3.data?.id) return r3.data.id;
+    }
+
+    return null;
+  }
+
+  const resolvedCompanyId = await resolveCompanyId();
   const candidates = [fromDigits, `+${fromDigits}`];
 
   let customer: any = null;
@@ -360,12 +408,14 @@ export async function POST(req: NextRequest) {
   }
 
   if (!customer) {
-    const { data: company } = await db
-      .from("companies")
-      .select("id")
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
+    const { data: company } = resolvedCompanyId
+      ? await db.from("companies").select("id").eq("id", resolvedCompanyId).maybeSingle()
+      : await db
+          .from("companies")
+          .select("id")
+          .order("created_at", { ascending: true })
+          .limit(1)
+          .maybeSingle();
 
     if (!company?.id) return NextResponse.json({ ok: true });
 
@@ -587,7 +637,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    const { page, lines, hasMore } = pick3Lines(categories, offset, (c, n) => `${n}) ${c.name}`);
+    const { lines, hasMore } = pick3Lines(categories, offset, (c, n) => `${n}) ${c.name}`);
 
     await setSession("ASK_CATEGORY", {
       ...nextCtx,
@@ -596,12 +646,11 @@ export async function POST(req: NextRequest) {
     });
 
     const top = header ? `${header}\n` : "";
-    const moreNumber = offset + page.length + 1; // próximo número após os itens visíveis
-    const moreLine = hasMore ? `\n${moreNumber}) Ver mais` : "";
+    const moreLine = hasMore ? `\n0) Ver mais` : "";
     await replyAndLog(
-      `${top}Escolhe uma categoria:\n${lines}${moreLine}\n0) Categorias\n\nResponde com o número.`,
-      { step: "category_menu", offset, moreNumber }
-    );
+  `${top}Escolhe uma categoria:\n${lines}${moreLine}\n9) Categorias\n\nResponde com o número.`,
+  { step: "category_menu", offset }
+);
 
     return NextResponse.json({ ok: true });
   }
@@ -631,7 +680,7 @@ export async function POST(req: NextRequest) {
       return await sendCategoryMenu(nextCtx, 0);
     }
 
-    const { page, lines, hasMore } = pick3Lines(list, offset, (s, i) => {
+    const { lines, hasMore } = pick3Lines(list, offset, (s, i) => {
       const price = formatPriceEur(s.price_cents);
       const pricePart = price ? ` - ${price}` : "";
       return `${i + 1}) ${s.name} (${s.duration_minutes}min${pricePart})`;
@@ -645,14 +694,12 @@ export async function POST(req: NextRequest) {
     });
 
     const top = header ? `${header}\n` : "";
-    const moreNumber = offset + page.length + 1; // próximo número após os itens visíveis
-    const moreLine = hasMore ? `\n${moreNumber}) Ver mais` : "";
+    const moreLine = hasMore ? `\n4) Ver mais` : "";
 
-    await replyAndLog(`${top}Agora escolhe o serviço:\n${lines}${moreLine}\n0) Categorias\n\nResponde com o número.`, {
+    await replyAndLog(`${top}Agora escolhe o serviço:\n${lines}${moreLine}\n\nResponde com 1, 2 ou 3.`, {
       step: "service_menu_by_category",
       category_id: categoryId,
       offset,
-      moreNumber,
     });
 
     return NextResponse.json({ ok: true });
@@ -922,51 +969,33 @@ export async function POST(req: NextRequest) {
     const categories: any[] = Array.isArray(ctx?.categories) ? ctx.categories : [];
     const offset: number = Number(ctx?.offset) || 0;
 
-    // comandos de voltar
-    const t = normalizeInboundText(textRaw);
-    if (t === "0" || t.includes("CATEG")) {
-      return await sendCategoryMenu(
-        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 },
-        0
-      );
-    }
-
     const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
     const n = Number(nRaw);
 
     if (!categories.length) {
-      return await sendCategoryMenu(
-        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 },
-        0
-      );
+      return await sendCategoryMenu({ mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 }, 0);
     }
 
-    const page = categories.slice(offset, offset + 3);
-    const hasMore = offset + 3 < categories.length;
-    const moreNumber = offset + page.length + 1;
-
-    // ver mais (sempre o próximo número após os itens visíveis)
-    if (hasMore && n === moreNumber) {
+    if (n === 4) {
       const nextOffset = offset + 3;
+      if (nextOffset >= categories.length) {
+        await replyAndLog("Não há mais categorias. Escolhe 1, 2 ou 3 da lista acima 😊", { step: "no_more_categories" });
+        return NextResponse.json({ ok: true });
+      }
       return await sendCategoryMenu(
         { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 },
         nextOffset
       );
     }
 
-    const min = offset + 1;
-    const max = offset + page.length;
-
-    // seleção válida é sempre o número que aparece no menu (numeração contínua)
-    if (!(n >= min && n <= max)) {
-      const opts = hasMore ? `${min}-${max} ou ${moreNumber} (ver mais)` : `${min}-${max}`;
-      await replyAndLog(`Responde com ${opts}.\nOu 0 para voltar às categorias.`, { step: "category_retry", offset, moreNumber });
+    if (![1, 2, 3].includes(n)) {
+      await replyAndLog("Responde 1, 2, 3 ou 4 (para ver mais categorias).", { step: "category_retry" });
       return NextResponse.json({ ok: true });
     }
 
-    const chosen = categories[n - 1];
+    const chosen = categories[offset + (n - 1)];
     if (!chosen?.id) {
-      await replyAndLog("Essa categoria não está disponível. Responde com o número da lista acima 😊", { step: "category_invalid", offset });
+      await replyAndLog("Essa categoria não está disponível. Responde 4 para ver mais 😊", { step: "category_invalid" });
       return NextResponse.json({ ok: true });
     }
 
@@ -978,21 +1007,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-
   // ✅ MODIFICADO: ASK_SERVICE agora usa ctx.services (já filtrado por categoria) e tem paginação + preço
   if (state === "ASK_SERVICE") {
     const services: any[] = Array.isArray(ctx?.services) ? ctx.services : [];
     const offset: number = Number(ctx?.offset) || 0;
     const categoryId: string | null = ctx?.category_id ?? null;
-
-    // voltar para categorias
-    const t = normalizeInboundText(textRaw);
-    if (t === "0" || t.includes("CATEG")) {
-      return await sendCategoryMenu(
-        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 },
-        0
-      );
-    }
 
     // se perdeu contexto, volta pra categorias
     if (!categoryId) {
@@ -1014,13 +1033,12 @@ export async function POST(req: NextRequest) {
     const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
     const n = Number(nRaw);
 
-    const page = services.slice(offset, offset + 3);
-    const hasMore = offset + 3 < services.length;
-    const moreNumber = offset + page.length + 1;
-
-    // ver mais (sempre o próximo número após os itens visíveis)
-    if (hasMore && n === moreNumber) {
+    if (n === 4) {
       const nextOffset = offset + 3;
+      if (nextOffset >= services.length) {
+        await replyAndLog("Não há mais serviços. Escolhe 1, 2 ou 3 da lista acima 😊", { step: "no_more_services" });
+        return NextResponse.json({ ok: true });
+      }
       return await sendServiceMenuFromCategory(
         { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null },
         categoryId,
@@ -1028,19 +1046,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const min = offset + 1;
-    const max = offset + page.length;
-
-    // seleção válida é sempre o número que aparece no menu (numeração contínua)
-    if (!(n >= min && n <= max)) {
-      const opts = hasMore ? `${min}-${max} ou ${moreNumber} (ver mais)` : `${min}-${max}`;
-      await replyAndLog(`Responde com ${opts}.\nOu 0 para voltar às categorias.`, { step: "service_retry", offset, moreNumber });
+    if (![1, 2, 3].includes(n)) {
+      await replyAndLog("Responde 1, 2, 3 ou 4 (para ver mais serviços).", { step: "service_retry" });
       return NextResponse.json({ ok: true });
     }
 
-    const svc = services[n - 1];
+    const svc = services[offset + (n - 1)];
     if (!svc?.id) {
-      await replyAndLog("Esse serviço não está disponível. Responde com o número da lista acima 😊", { step: "service_invalid", offset });
+      await replyAndLog("Esse serviço não está disponível. Responde 4 para ver mais 😊", { step: "service_invalid" });
       return NextResponse.json({ ok: true });
     }
 
@@ -1055,10 +1068,9 @@ export async function POST(req: NextRequest) {
     const price = formatPriceEur(svc.price_cents);
     const pricePart = price ? ` (${price})` : "";
 
-    await replyAndLog(
-      `✅ Serviço: *${svc.name}* (${svc.duration_minutes}min)${pricePart}\nAgora diz-me o dia (HOJE, AMANHÃ ou 10/02).`,
-      { step: "day" }
-    );
+    await replyAndLog(`✅ Serviço: *${svc.name}* (${svc.duration_minutes}min)${pricePart}\nAgora diz-me o dia (HOJE, AMANHÃ ou 10/02).`, {
+      step: "day",
+    });
 
     return NextResponse.json({ ok: true });
   }
