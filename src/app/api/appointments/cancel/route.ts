@@ -191,7 +191,8 @@ export async function POST(req: NextRequest) {
         (bookingLink ? ` ou clique no link: ${bookingLink}` : "") +
         `\n\nObrigado!`;
 
-      await sendWhatsApp({ to: phone, body: msg });
+      // ✅ teu sendWhatsApp espera 2 args
+      await sendWhatsApp(phone, msg);
     }
 
     return NextResponse.json({ ok: true });
