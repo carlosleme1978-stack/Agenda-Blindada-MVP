@@ -25,9 +25,63 @@ function stripDiacritics(s: string) {
   return s.normalize("NFD").replace(/\p{Diacritic}/gu, "");
 }
 
+function isIntentGreeting(text: string) {
+  return (
+    text === "OI" ||
+    text === "OLA" ||
+    text === "OLÁ" ||
+    text.startsWith("OI ") ||
+    text.startsWith("OLA") ||
+    text.startsWith("OLÁ") ||
+    text.includes("BOM DIA") ||
+    text.includes("BOA TARDE") ||
+    text.includes("BOA NOITE") ||
+    text.includes("TUDO BEM") ||
+    text.includes("TD BEM") ||
+    text.includes("COMO ESTA") ||
+    text.includes("COMO ESTÁ")
+  );
+}
+
+function isIntentHelp(text: string) {
+  return (
+    text === "AJUDA" ||
+    text === "MENU" ||
+    text.includes("COMO FUNCIONA") ||
+    text.includes("OPCOES") ||
+    text.includes("OPÇÕES") ||
+    text.includes("O QUE POSSO") ||
+    text.includes("QUE POSSO")
+  );
+}
+
+function isIntentValues(text: string) {
+  return (
+    text === "VALORES" ||
+    text === "PRECO" ||
+    text === "PREÇO" ||
+    text.includes("QUANTO CUSTA") ||
+    text.includes("VALOR") ||
+    text.includes("ORCAMENTO") ||
+    text.includes("ORÇAMENTO")
+  );
+}
+
+function isIntentHuman(text: string) {
+  return (
+    text.includes("ATENDENTE") ||
+    text.includes("HUMANO") ||
+    text.includes("PESSOA") ||
+    text.includes("FALAR COM") ||
+    text.includes("LIGAR") ||
+    text.includes("TELEFONE")
+  );
+}
+
 function isIntentMark(text: string) {
   return (
     text.includes("QUERO MARCAR") ||
+    text.includes("GOSTARIA DE MARCAR") || // ✅ novo
     text === "MARCAR" ||
     text === "AGENDAR" ||
     text.includes("AGENDAR") ||
@@ -175,6 +229,28 @@ function lisbonNowHHMM(): string {
   return `${hh}:${mm}`;
 }
 
+function getGreetingByTime() {
+  const hhmm = lisbonNowHHMM();
+  const h = Number(hhmm.split(":")[0] || 0);
+  if (h < 12) return "Bom dia";
+  if (h < 18) return "Boa tarde";
+  return "Boa noite";
+}
+
+function buildMainMenu(companyName?: string | null) {
+  const hi = getGreetingByTime();
+  const nameLine = companyName ? ` da *${companyName}*` : "";
+  return `${hi} 👋 Sou o assistente${nameLine}.
+
+Como posso ajudar?
+1) Marcar
+2) Reagendar
+3) Valores
+4) Falar com alguém
+
+(Responde com 1, 2, 3 ou 4)`;
+}
+
 // ─────────────────────────────────────────────
 // Webhook Verification (GET)
 // ─────────────────────────────────────────────
@@ -211,6 +287,7 @@ export async function POST(req: NextRequest) {
   const rawFrom: string = message.from;
   const fromDigits = onlyDigits(rawFrom);
   const textRaw = normalizeInboundText(message.text.body);
+  const text = stripDiacritics(textRaw);
   const waMessageId: string | undefined = message.id;
 
   const db = supabaseAdmin();
@@ -280,71 +357,6 @@ export async function POST(req: NextRequest) {
   }
 
   const companyId = customer.company_id;
-
-  // ─────────────────────────────────────────────
-  // Carregar agenda por cliente (fallback no schedule.ts)
-  // ─────────────────────────────────────────────
-  async function getCompanySchedule() {
-    const { data } = await db
-      .from("companies")
-      .select(
-        "lunch_break_enabled,lunch_break_start,lunch_break_end,daily_limit_enabled,daily_limit_max,slot_capacity"
-      )
-      .eq("id", companyId)
-      .maybeSingle();
-
-    return {
-      lunchBreak: {
-        enabled: data?.lunch_break_enabled ?? SCHEDULE_CONFIG.lunchBreak.enabled,
-        start: data?.lunch_break_start ?? SCHEDULE_CONFIG.lunchBreak.start,
-        end: data?.lunch_break_end ?? SCHEDULE_CONFIG.lunchBreak.end,
-      },
-      dailyLimit: {
-        enabled: data?.daily_limit_enabled ?? SCHEDULE_CONFIG.dailyLimit.enabled,
-        maxAppointments: data?.daily_limit_max ?? SCHEDULE_CONFIG.dailyLimit.maxAppointments,
-      },
-      slotCapacity: Math.max(1, Number(data?.slot_capacity ?? 1)),
-    };
-  }
-
-  const COMPANY_SCHEDULE = await getCompanySchedule();
-
-  function isSlotInLunchBreak(slot: { startISO: string; endISO: string }, isoDate: string) {
-    if (!COMPANY_SCHEDULE.lunchBreak.enabled) return false;
-
-    const lbStart = `${isoDate}T${COMPANY_SCHEDULE.lunchBreak.start}:00.000Z`;
-    const lbEnd = `${isoDate}T${COMPANY_SCHEDULE.lunchBreak.end}:00.000Z`;
-    return overlaps(slot.startISO, slot.endISO, lbStart, lbEnd);
-  }
-
-  async function countAppointmentsForDay(isoDate: string) {
-    const dayStart = `${isoDate}T00:00:00.000Z`;
-    const dayEnd = `${isoDate}T23:59:59.999Z`;
-
-    const { count, error } = await db
-      .from("appointments")
-      .select("*", { count: "exact", head: true })
-      .eq("company_id", companyId)
-      .gte("start_time", dayStart)
-      .lte("start_time", dayEnd)
-      .in("status", ["BOOKED", "CONFIRMED"]);
-
-    if (error) console.error("countAppointmentsForDay error:", error);
-    return count ?? 0;
-  }
-
-  async function countOverlappingAppointments(startISO: string, endISO: string) {
-    const { count, error } = await db
-      .from("appointments")
-      .select("*", { count: "exact", head: true })
-      .eq("company_id", companyId)
-      .in("status", ["BOOKED", "CONFIRMED"])
-      .lt("start_time", endISO)
-      .gt("end_time", startISO);
-
-    if (error) console.error("countOverlappingAppointments error:", error);
-    return count ?? 0;
-  }
 
   // ─────────────────────────────────────────────
   // Sessão do chat (estado)
@@ -432,11 +444,130 @@ export async function POST(req: NextRequest) {
     if (!dayOk || !timeOk) {
       const msg =
         flow === "new"
-          ? `⏱️ Estamos fora do horário de atendimento agora.\nMas você pode agendar normalmente aqui.`
-          : `⏱️ Estamos fora do horário de atendimento agora.\nMas você pode reagendar normalmente aqui.`;
+          ? `⏰ Neste momento estamos fora do horário, mas podes agendar já por aqui — é rapidinho.`
+          : `⏰ Neste momento estamos fora do horário, mas podes reagendar já por aqui — é rapidinho.`;
 
       await replyAndLog(msg, { step: "outside_hours_notice" });
     }
+  }
+
+  // ─────────────────────────────────────────────
+  // Carregar agenda por cliente (fallback no schedule.ts)
+  // ─────────────────────────────────────────────
+  async function getCompanySchedule() {
+    const { data } = await db
+      .from("companies")
+      .select(
+        "lunch_break_enabled,lunch_break_start,lunch_break_end,daily_limit_enabled,daily_limit_max,slot_capacity"
+      )
+      .eq("id", companyId)
+      .maybeSingle();
+
+    return {
+      lunchBreak: {
+        enabled: data?.lunch_break_enabled ?? SCHEDULE_CONFIG.lunchBreak.enabled,
+        start: data?.lunch_break_start ?? SCHEDULE_CONFIG.lunchBreak.start,
+        end: data?.lunch_break_end ?? SCHEDULE_CONFIG.lunchBreak.end,
+      },
+      dailyLimit: {
+        enabled: data?.daily_limit_enabled ?? SCHEDULE_CONFIG.dailyLimit.enabled,
+        maxAppointments: data?.daily_limit_max ?? SCHEDULE_CONFIG.dailyLimit.maxAppointments,
+      },
+      slotCapacity: Math.max(1, Number(data?.slot_capacity ?? 1)),
+    };
+  }
+
+  const COMPANY_SCHEDULE = await getCompanySchedule();
+
+  function isSlotInLunchBreak(slot: { startISO: string; endISO: string }, isoDate: string) {
+    if (!COMPANY_SCHEDULE.lunchBreak.enabled) return false;
+
+    const lbStart = `${isoDate}T${COMPANY_SCHEDULE.lunchBreak.start}:00.000Z`;
+    const lbEnd = `${isoDate}T${COMPANY_SCHEDULE.lunchBreak.end}:00.000Z`;
+    return overlaps(slot.startISO, slot.endISO, lbStart, lbEnd);
+  }
+
+  async function countAppointmentsForDay(isoDate: string) {
+    const dayStart = `${isoDate}T00:00:00.000Z`;
+    const dayEnd = `${isoDate}T23:59:59.999Z`;
+
+    const { count, error } = await db
+      .from("appointments")
+      .select("*", { count: "exact", head: true })
+      .eq("company_id", companyId)
+      .gte("start_time", dayStart)
+      .lte("start_time", dayEnd)
+      .in("status", ["BOOKED", "CONFIRMED"]);
+
+    if (error) console.error("countAppointmentsForDay error:", error);
+    return count ?? 0;
+  }
+
+  async function countOverlappingAppointments(startISO: string, endISO: string) {
+    const { count, error } = await db
+      .from("appointments")
+      .select("*", { count: "exact", head: true })
+      .eq("company_id", companyId)
+      .in("status", ["BOOKED", "CONFIRMED"])
+      .lt("start_time", endISO)
+      .gt("end_time", startISO);
+
+    if (error) console.error("countOverlappingAppointments error:", error);
+    return count ?? 0;
+  }
+
+  // ─────────────────────────────────────────────
+  // Menu humano (IDLE / greeting / help)
+  // ─────────────────────────────────────────────
+  async function replyMenu(step = "menu") {
+    const { data: c0 } = await db.from("companies").select("name").eq("id", companyId).maybeSingle();
+    await replyAndLog(buildMainMenu(c0?.name ?? null), { step });
+  }
+
+  // Se a pessoa estiver IDLE e mandar "1/2/3/4", tratar como menu
+  if (state === "IDLE") {
+    if (text === "1") {
+      // cair no fluxo de marcação
+    } else if (text === "2") {
+      // cair no fluxo de reagendar
+    } else if (text === "3") {
+      // valores
+      await replyAndLog(
+        `Sobre valores 💶\nO preço pode variar consoante o serviço.\n\nSe me disseres o que pretendes (ex: “corte”, “consulta”, “barba”), eu já te oriento.\n\nPara marcar, responde: *QUERO MARCAR*`,
+        { step: "values" }
+      );
+      return NextResponse.json({ ok: true });
+    } else if (text === "4") {
+      await replyAndLog(
+        `Claro 👍\nVou deixar registado para a equipa falar contigo.\nSe preferires, diz-me em 1 frase o motivo (ex: “dúvida sobre horários/valores”).`,
+        { step: "handoff_human" }
+      );
+      return NextResponse.json({ ok: true });
+    }
+  }
+
+  // Cumprimentos / ajuda (em qualquer estado, mas principalmente em IDLE)
+  if (isIntentGreeting(text) || isIntentHelp(text)) {
+    await replyMenu("menu_greeting");
+    return NextResponse.json({ ok: true });
+  }
+
+  // Valores
+  if (isIntentValues(text)) {
+    await replyAndLog(
+      `Sobre valores 💶\nO preço pode variar consoante o serviço.\n\nSe me disseres o que pretendes (ex: “corte”, “consulta”, “barba”), eu já te oriento.\n\nPara marcar, responde: *QUERO MARCAR*`,
+      { step: "values" }
+    );
+    return NextResponse.json({ ok: true });
+  }
+
+  // Falar com humano
+  if (isIntentHuman(text)) {
+    await replyAndLog(
+      `Claro 👍\nVou deixar registado para a equipa falar contigo.\nSe preferires, diz-me em 1 frase o motivo (ex: “dúvida sobre horários/valores”).`,
+      { step: "handoff_human" }
+    );
+    return NextResponse.json({ ok: true });
   }
 
   // ─────────────────────────────────────────────
@@ -452,7 +583,9 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     if (cfgErr || !cfg) {
-      await replyAndLog("Erro ao carregar horários da empresa.", { step: "cfg_error" });
+      await replyAndLog("Ups… tive um problema a carregar os horários. Podes tentar novamente daqui a pouco?", {
+        step: "cfg_error",
+      });
       return NextResponse.json({ ok: true });
     }
 
@@ -463,7 +596,10 @@ export async function POST(req: NextRequest) {
 
     const dayNum = isoDayNumberLisbon(isoDate);
     if (!workDays.includes(dayNum)) {
-      await replyAndLog("Não atendemos nesse dia. Escolha outro dia.", { step: "day_not_allowed", isoDate, dayNum });
+      await replyAndLog(
+        `Nesse dia não atendemos 😊\nQueres escolher outro? (ex: AMANHÃ ou 10/02)`,
+        { step: "day_not_allowed", isoDate, dayNum }
+      );
       return NextResponse.json({ ok: true });
     }
 
@@ -472,7 +608,7 @@ export async function POST(req: NextRequest) {
       const total = await countAppointmentsForDay(isoDate);
       if (total >= COMPANY_SCHEDULE.dailyLimit.maxAppointments) {
         await replyAndLog(
-          `📅 A agenda de ${formatDatePt(isoDate)} já está completa.\nEscolha outro dia (ex: AMANHÃ, 10/02).`,
+          `📅 A agenda de ${formatDatePt(isoDate)} já está completa.\nQueres tentar outro dia? (ex: AMANHÃ ou 10/02)`,
           { step: "daily_limit_block", isoDate, total }
         );
         return NextResponse.json({ ok: true });
@@ -503,14 +639,13 @@ export async function POST(req: NextRequest) {
       .lte("start_time", dayEnd)
       .in("status", ["BOOKED", "CONFIRMED"]);
 
-    // ✅ PASSO 4: capacidade por slot
-    // mantém o slot se overlaps < slotCapacity
+    // ✅ capacidade por slot
     let free = allSlots.filter((s) => {
       const used = (dayAppts || []).filter((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time)).length;
       return used < COMPANY_SCHEDULE.slotCapacity;
     });
 
-    // ✅ Passo 2: se for HOJE, não oferecer horários no passado
+    // ✅ se for HOJE, não oferecer horários no passado
     const todayIso = toISODateLisbon(new Date());
     if (isoDate === todayIso) {
       const nowHHMM = lisbonNowHHMM();
@@ -518,7 +653,10 @@ export async function POST(req: NextRequest) {
     }
 
     if (free.length === 0) {
-      await replyAndLog("Não há horários disponíveis nesse dia. Escolha outro.", { step: "no_slots", isoDate });
+      await replyAndLog(
+        `Nesse dia já não tenho horários disponíveis 😕\nQueres tentar outro dia? (ex: AMANHÃ ou 12/02)`,
+        { step: "no_slots", isoDate }
+      );
       return NextResponse.json({ ok: true });
     }
 
@@ -532,11 +670,10 @@ export async function POST(req: NextRequest) {
       slots: free,
     });
 
-    await replyAndLog(`📅 ${formatDatePt(isoDate)}\nEscolha um horário:\n${lines}\n4) Ver mais horários`, {
-      step: "slots_page_0",
-      isoDate,
-      slotCapacity: COMPANY_SCHEDULE.slotCapacity,
-    });
+    await replyAndLog(
+      `📅 ${formatDatePt(isoDate)}\nTenho estes horários disponíveis:\n${lines}\n4) Ver mais`,
+      { step: "slots_page_0", isoDate, slotCapacity: COMPANY_SCHEDULE.slotCapacity }
+    );
 
     return NextResponse.json({ ok: true });
   }
@@ -544,7 +681,11 @@ export async function POST(req: NextRequest) {
   // ─────────────────────────────────────────────
   // ✅ SEMPRE permite reiniciar o fluxo
   // ─────────────────────────────────────────────
-  if (isIntentReschedule(textRaw)) {
+  // Se veio via menu numérico em IDLE
+  const isMenuReschedule = state === "IDLE" && text === "2";
+  const isMenuMark = state === "IDLE" && text === "1";
+
+  if (isIntentReschedule(text) || isMenuReschedule) {
     await clearSession();
     await maybeWarnOutsideHours("reschedule");
 
@@ -577,10 +718,10 @@ export async function POST(req: NextRequest) {
       const lines = services
         .slice(0, 3)
         .map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-      await replyAndLog(`🔁 Reagendar\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`, {
-        flow: "reschedule",
-        step: "service",
-      });
+      await replyAndLog(
+        `🔁 Vamos reagendar 😊\nPara qual serviço?\n${lines.join("\n")}\n\nResponde com 1, 2 ou 3.`,
+        { flow: "reschedule", step: "service" }
+      );
     } else {
       await setSession("ASK_DAY", {
         mode: "RESCHEDULE",
@@ -590,16 +731,16 @@ export async function POST(req: NextRequest) {
         offset: 0,
       });
 
-      await replyAndLog("🔁 Reagendar\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)", {
-        flow: "reschedule",
-        step: "day",
-      });
+      await replyAndLog(
+        `🔁 Vamos reagendar 😊\nQue dia preferes? (HOJE, AMANHÃ ou 10/02)`,
+        { flow: "reschedule", step: "day" }
+      );
     }
 
     return NextResponse.json({ ok: true });
   }
 
-  if (isIntentMark(textRaw)) {
+  if (isIntentMark(text) || isMenuMark) {
     await clearSession();
     await maybeWarnOutsideHours("new");
 
@@ -617,17 +758,17 @@ export async function POST(req: NextRequest) {
       const lines = services
         .slice(0, 3)
         .map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-      await replyAndLog(`📅 Marcação\nQual serviço você deseja?\n${lines.join("\n")}\nResponda 1, 2 ou 3.`, {
-        flow: "new",
-        step: "service",
-      });
+      await replyAndLog(
+        `Perfeito 😊 Para avançarmos, diz-me qual serviço queres:\n${lines.join("\n")}\n\nResponde com 1, 2 ou 3.`,
+        { flow: "new", step: "service" }
+      );
     } else {
       await setSession("ASK_DAY", { mode: "NEW", service_id: null, duration_minutes: 30, offset: 0 });
 
-      await replyAndLog("📅 Marcação\nQual dia você prefere? (ex: HOJE, AMANHÃ, 10/02)", {
-        flow: "new",
-        step: "day",
-      });
+      await replyAndLog(
+        `Boa! Que dia preferes? (podes responder HOJE, AMANHÃ ou 10/02)`,
+        { flow: "new", step: "day" }
+      );
     }
 
     return NextResponse.json({ ok: true });
@@ -636,8 +777,8 @@ export async function POST(req: NextRequest) {
   // ─────────────────────────────────────────────
   // Confirmação SIM / NÃO (qualquer estado)
   // ─────────────────────────────────────────────
-  if (isYesNo(textRaw)) {
-    const yn = textRaw === "NAO" ? "NÃO" : textRaw;
+  if (isYesNo(text)) {
+    const yn = text === "NAO" ? "NÃO" : text;
     const pendingId = ctx?.pending_appointment_id ?? null;
 
     let appt: any = null;
@@ -667,8 +808,8 @@ export async function POST(req: NextRequest) {
 
     const reply =
       yn === "SIM"
-        ? "✅ Perfeito! Sua marcação foi confirmada. Obrigado."
-        : "❌ Ok! Sua marcação foi cancelada. Se quiser remarcar, responda: QUERO MARCAR";
+        ? "✅ Excelente! Está confirmado. Se precisares de alterar depois, é só dizer *REAGENDAR*."
+        : "Sem problema 🙂 Cancelei por aqui. Se quiseres, responde *QUERO MARCAR* para escolher outro horário.";
 
     await replyAndLog(reply, { appointment_id: appt.id, flow: "confirm" });
     await clearSession();
@@ -691,7 +832,7 @@ export async function POST(req: NextRequest) {
 
     if (!services || services.length === 0) {
       await setSession("ASK_DAY", { ...ctx, duration_minutes: 30, offset: 0 });
-      await replyAndLog("📅 Qual dia você prefere? (HOJE, AMANHÃ, 10/02)");
+      await replyAndLog(`Boa! Que dia preferes? (HOJE, AMANHÃ ou 10/02)`, { step: "day" });
       return NextResponse.json({ ok: true });
     }
 
@@ -699,7 +840,10 @@ export async function POST(req: NextRequest) {
       const lines = services
         .slice(0, 3)
         .map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-      await replyAndLog(`Responda com o número do serviço:\n${lines.join("\n")}`, { step: "service_retry" });
+      await replyAndLog(
+        `Só para confirmar 😊\nResponde com o número do serviço:\n${lines.join("\n")}`,
+        { step: "service_retry" }
+      );
       return NextResponse.json({ ok: true });
     }
 
@@ -713,9 +857,10 @@ export async function POST(req: NextRequest) {
       offset: 0,
     });
 
-    await replyAndLog(`✅ Serviço escolhido: ${svc.name}\nAgora, qual dia você prefere? (HOJE, AMANHÃ, 10/02)`, {
-      step: "day",
-    });
+    await replyAndLog(
+      `✅ Perfeito, serviço: *${svc.name}*\nAgora diz-me o dia (HOJE, AMANHÃ ou 10/02).`,
+      { step: "day" }
+    );
 
     return NextResponse.json({ ok: true });
   }
@@ -723,7 +868,10 @@ export async function POST(req: NextRequest) {
   if (state === "ASK_DAY") {
     const isoDate = parseDayPt(textRaw);
     if (!isoDate) {
-      await replyAndLog("Não entendi o dia. Envie: HOJE, AMANHÃ ou 10/02", { step: "day_retry" });
+      await replyAndLog(
+        `Ainda não apanhei o dia 😅\nResponde assim, por favor: HOJE, AMANHÃ ou 10/02.`,
+        { step: "day_retry" }
+      );
       return NextResponse.json({ ok: true });
     }
     return await processDaySelection(isoDate);
@@ -745,7 +893,7 @@ export async function POST(req: NextRequest) {
 
     if (!isoDate || slots.length === 0) {
       await clearSession();
-      await replyAndLog("Vamos começar de novo. Envie: QUERO MARCAR", { step: "reset" });
+      await replyAndLog(`Vamos começar de novo 😊\nResponde: *QUERO MARCAR*`, { step: "reset" });
       return NextResponse.json({ ok: true });
     }
 
@@ -755,7 +903,7 @@ export async function POST(req: NextRequest) {
 
       if (page.length === 0) {
         await replyAndLog(
-          "Não há mais horários.\nEscolha 1, 2 ou 3 da lista anterior,\nou envie outro dia (ex: 07/02).",
+          `Já não tenho mais horários nesse dia.\nEscolhe 1, 2 ou 3 da lista anterior,\nou envia outro dia (ex: 07/02).`,
           { step: "no_more_slots" }
         );
         return NextResponse.json({ ok: true });
@@ -764,28 +912,31 @@ export async function POST(req: NextRequest) {
       const lines = page.map((s, i) => `${i + 1}) ${s.label}`).join("\n");
       await setSession("SHOW_SLOTS", { ...ctx, offset: nextOffset });
 
-      await replyAndLog(`📅 ${formatDatePt(isoDate)}\nMais horários:\n${lines}\n4) Ver mais horários`, {
-        step: `slots_page_${nextOffset}`,
-      });
+      await replyAndLog(
+        `📅 ${formatDatePt(isoDate)}\nMais horários:\n${lines}\n4) Ver mais`,
+        { step: `slots_page_${nextOffset}` }
+      );
 
       return NextResponse.json({ ok: true });
     }
 
     if (![1, 2, 3].includes(n)) {
-      await replyAndLog("Responda 1, 2, 3 ou 4 (mais horários).", { step: "slot_retry" });
+      await replyAndLog(`Responde 1, 2, 3 ou 4 (para ver mais horários).`, { step: "slot_retry" });
       return NextResponse.json({ ok: true });
     }
 
     const chosen = slots[offset + (n - 1)];
     if (!chosen) {
-      await replyAndLog("Esse horário não está disponível. Responda 4 para ver mais horários.", { step: "slot_invalid" });
+      await replyAndLog(`Esse horário já não está disponível 😕\nResponde 4 para ver mais horários.`, {
+        step: "slot_invalid",
+      });
       return NextResponse.json({ ok: true });
     }
 
     // ✅ re-check pausa
     if (COMPANY_SCHEDULE.lunchBreak.enabled && isSlotInLunchBreak(chosen, isoDate)) {
       await replyAndLog(
-        `⏸️ Esse horário cai na pausa de almoço.\nEscolha outro horário (1, 2, 3) ou 4 para ver mais.`,
+        `⏸️ Esse horário cai na pausa de almoço.\nEscolhe outro (1, 2, 3) ou 4 para ver mais.`,
         { step: "lunch_break_recheck_block", isoDate, chosen: chosen.label }
       );
       return NextResponse.json({ ok: true });
@@ -797,18 +948,18 @@ export async function POST(req: NextRequest) {
       if (total >= COMPANY_SCHEDULE.dailyLimit.maxAppointments) {
         await clearSession();
         await replyAndLog(
-          `📅 A agenda de ${formatDatePt(isoDate)} já ficou completa agora.\nEscolha outro dia (ex: AMANHÃ, 10/02).`,
+          `📅 A agenda de ${formatDatePt(isoDate)} acabou de ficar completa.\nQueres tentar outro dia? (ex: AMANHÃ ou 10/02)`,
           { step: "daily_limit_recheck_block", isoDate, total }
         );
         return NextResponse.json({ ok: true });
       }
     }
 
-    // ✅ PASSO 4 (anti-bypass): re-check capacidade do slot no DB antes de gravar
+    // ✅ anti-bypass: re-check capacidade do slot no DB antes de gravar
     const usedNow = await countOverlappingAppointments(chosen.startISO, chosen.endISO);
     if (usedNow >= COMPANY_SCHEDULE.slotCapacity) {
       await replyAndLog(
-        `⚠️ Esse horário acabou de ficar cheio.\nEscolha outro horário (1, 2, 3) ou 4 para ver mais.`,
+        `⚠️ Esse horário acabou de ficar cheio.\nEscolhe outro (1, 2, 3) ou 4 para ver mais.`,
         { step: "slot_capacity_full", isoDate, chosen: chosen.label, usedNow, cap: COMPANY_SCHEDULE.slotCapacity }
       );
       return NextResponse.json({ ok: true });
@@ -844,13 +995,18 @@ export async function POST(req: NextRequest) {
       pending_appointment_id: apptId,
     });
 
-    const svcLine = ctx?.service_name ? `\nServiço: ${ctx.service_name}` : "";
+    const svcLine = ctx?.service_name ? `\nServiço: *${ctx.service_name}*` : "";
     await replyAndLog(
-      `✅ Reservei para ${formatDatePt(isoDate)} às ${chosen.label}.${svcLine}\nConfirma? Responda SIM ou NÃO.`,
+      `Combinado ✅\nFicou pré-reservado para *${formatDatePt(isoDate)}* às *${chosen.label}*.${svcLine}\n\nConfirmas? Responde *SIM* ou *NÃO*.`,
       { step: "confirm", appointment_id: apptId }
     );
 
     return NextResponse.json({ ok: true });
+  }
+
+  // Se não entendeu e está IDLE, mostra menu
+  if (state === "IDLE") {
+    await replyMenu("menu_fallback");
   }
 
   return NextResponse.json({ ok: true });
