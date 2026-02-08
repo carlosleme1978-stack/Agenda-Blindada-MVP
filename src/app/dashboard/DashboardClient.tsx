@@ -46,7 +46,7 @@ function formatDateTimeLisbon(iso: string) {
   return { date, time };
 }
 
-/** ✅ NOVO: “agora” real em Europe/Lisbon */
+/** ✅ “agora” real em Europe/Lisbon */
 function nowLisbonDate() {
   return new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Lisbon" }));
 }
@@ -103,6 +103,9 @@ export default function DashboardClient() {
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<AppointmentRow[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
+
+  // ✅ NOVO: estado do botão cancelar
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   // B: filtros
   const [filter, setFilter] = useState<StatusFilter>("ALL");
@@ -181,7 +184,7 @@ export default function DashboardClient() {
         `
         )
         .eq("company_id", companyId)
-        .order("start_time", { ascending: true }) // 👈 já ajuda para “próximas”
+        .order("start_time", { ascending: true })
         .limit(200);
 
       if (qErr) {
@@ -265,14 +268,45 @@ export default function DashboardClient() {
     window.location.href = "/login";
   };
 
-  // ✅ B: dataset “enriquecido” (nome/telefone/status normalizado)
+  // ✅ NOVO: ação de cancelar (chama tua API /api/appointments/cancel)
+  async function cancelAppointment(a: any) {
+    const st = normalizeStatus(a.status);
+    if (st === "CANCELLED") return;
+
+    const ok = window.confirm(
+      `Cancelar a marcação de ${a._displayName}?\n\nIsso vai cancelar no sistema e enviar mensagem de reagendar ao cliente.`
+    );
+    if (!ok) return;
+
+    try {
+      setCancellingId(a.id);
+      setError(null);
+
+      const res = await fetch("/api/appointments/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ appointment_id: a.id }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Falha ao cancelar");
+
+      // ✅ Atualiza UI
+      setRows((prev) => prev.map((r) => (r.id === a.id ? { ...r, status: "CANCELLED" } : r)));
+
+      // ✅ garante consistência
+      await refresh();
+    } catch (e: any) {
+      setError(e?.message || "Erro ao cancelar");
+    } finally {
+      setCancellingId(null);
+    }
+  }
+
+  // ✅ dataset “enriquecido” (nome/telefone/status normalizado)
   const enriched = useMemo(() => {
     return rows.map((a) => {
-      const displayName =
-        a.customer_name_snapshot?.trim() ||
-        a.customers?.name?.trim() ||
-        "Cliente";
-
+      const displayName = a.customer_name_snapshot?.trim() || a.customers?.name?.trim() || "Cliente";
       const phone = a.customers?.phone || "—";
       const st = normalizeStatus(a.status);
       const bucket = statusBucket(st);
@@ -288,7 +322,7 @@ export default function DashboardClient() {
     });
   }, [rows]);
 
-  // ✅ B: ordenação “próximas primeiro” (futuras no topo)
+  // ✅ ordenação “próximas primeiro”
   const sorted = useMemo(() => {
     const now = Date.now();
     const copy = [...enriched];
@@ -297,20 +331,15 @@ export default function DashboardClient() {
       const aFuture = a._startMs >= now;
       const bFuture = b._startMs >= now;
 
-      // futuras primeiro
       if (aFuture !== bFuture) return aFuture ? -1 : 1;
-
-      // entre futuras: mais próxima primeiro
       if (aFuture && bFuture) return a._startMs - b._startMs;
-
-      // entre passadas: mais recente primeiro
       return b._startMs - a._startMs;
     });
 
     return copy;
   }, [enriched]);
 
-  // ✅ B: filtro + busca
+  // ✅ filtro + busca
   const filtered = useMemo(() => {
     const qq = cleanStr(q);
     return sorted.filter((a) => {
@@ -325,7 +354,7 @@ export default function DashboardClient() {
     });
   }, [sorted, filter, q]);
 
-  // ✅ B: contadores do conjunto filtrado (fica muito premium)
+  // ✅ contadores
   const counts = useMemo(() => {
     const total = filtered.length;
     const confirmed = filtered.filter((r) => r._bucket === "CONFIRMED").length;
@@ -340,7 +369,7 @@ export default function DashboardClient() {
   const todayYmd = useMemo(() => lisbonYMD(nowLisbon), [nowLisbon]);
   const tomorrowYmd = useMemo(() => lisbonYMD(addDaysLisbon(nowLisbon, 1)), [nowLisbon]);
 
-  // ✅ Apenas hoje/amanhã/depois (sem passado no dashboard)
+  // ✅ Apenas hoje/amanhã/depois (sem passado)
   const grouped = useMemo(() => {
     const today: any[] = [];
     const tomorrow: any[] = [];
@@ -349,14 +378,13 @@ export default function DashboardClient() {
     const nowMs = Date.now();
     for (const a of filtered as any[]) {
       const ms = a._startMs ?? new Date(a.start_time).getTime();
-      if (ms < nowMs - 60 * 1000) continue; // ignora passado (com 1min de tolerância)
+      if (ms < nowMs - 60 * 1000) continue; // ignora passado
       const ymd = lisbonYMD(new Date(a.start_time));
       if (ymd === todayYmd) today.push(a);
       else if (ymd === tomorrowYmd) tomorrow.push(a);
       else after.push(a);
     }
 
-    // Ordena cada grupo por horário
     const byTime = (x: any, y: any) => (x._startMs ?? 0) - (y._startMs ?? 0);
     today.sort(byTime);
     tomorrow.sort(byTime);
@@ -367,7 +395,7 @@ export default function DashboardClient() {
 
   const { today, tomorrow, after } = grouped;
 
-  /** ✅ NOVO: Próxima marcação (a mais próxima futura) + ETA */
+  /** ✅ Próxima marcação (a mais próxima futura) + ETA */
   const nextAppointment = useMemo(() => {
     const nowMs = nowLisbonDate().getTime();
     const all = [...today, ...tomorrow, ...after]
@@ -382,6 +410,7 @@ export default function DashboardClient() {
     return humanEta(mins);
   }, [nextAppointment]);
 
+  // ✅ Tabela com botão cancelar
   const renderTable = (list: any[]) => (
     <div className="tableWrap">
       <table className="table">
@@ -391,12 +420,13 @@ export default function DashboardClient() {
             <th>Cliente</th>
             <th>Telefone</th>
             <th style={{ textAlign: "right" }}>Estado</th>
+            <th style={{ textAlign: "right" }}>Ações</th>
           </tr>
         </thead>
         <tbody>
           {list.length === 0 ? (
             <tr>
-              <td colSpan={4} className="empty">
+              <td colSpan={5} className="empty">
                 Sem marcações.
               </td>
             </tr>
@@ -405,6 +435,9 @@ export default function DashboardClient() {
               const { date, time } = formatDateTimeLisbon(a.start_time);
               const tone = statusTone(a.status);
               const label = statusLabelPT(a.status);
+
+              const isCancelled = normalizeStatus(a.status) === "CANCELLED";
+              const busy = cancellingId === a.id;
 
               return (
                 <tr key={a.id}>
@@ -415,6 +448,16 @@ export default function DashboardClient() {
                   <td className="mono">{a._phone}</td>
                   <td style={{ textAlign: "right" }}>
                     <span className={`badge ${tone}`}>{label}</span>
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    <button
+                      className={`btnDanger ${isCancelled ? "disabled" : ""}`}
+                      disabled={isCancelled || busy}
+                      onClick={() => cancelAppointment(a)}
+                      title={isCancelled ? "Já está cancelada" : "Cancelar marcação"}
+                    >
+                      {busy ? "Cancelando..." : "Cancelar"}
+                    </button>
                   </td>
                 </tr>
               );
@@ -539,7 +582,7 @@ export default function DashboardClient() {
           </div>
         </div>
 
-        {/* ✅ B: barra premium de filtros + busca */}
+        {/* ✅ barra premium de filtros + busca */}
         <div className="toolbar">
           <div className="chips">
             <button className={activeChip("ALL")} onClick={() => setFilter("ALL")}>
@@ -592,7 +635,7 @@ export default function DashboardClient() {
           </div>
         </div>
 
-        {/* ✅ NOVO: Próxima marcação (card) */}
+        {/* ✅ Próxima marcação (card) */}
         <div className="card nextCard">
           <div>
             <div className="cardLabel">Próxima marcação</div>
@@ -766,7 +809,7 @@ h1{
   background:#fff;
 }
 
-/* ✅ B: toolbar premium */
+/* ✅ toolbar premium */
 .toolbar{
   display:flex;
   align-items:center;
@@ -841,16 +884,14 @@ h1{
   border-radius:18px;
   padding:14px 14px;
   box-shadow: 0 18px 40px rgba(15,23,42,0.06);
-      margin-left:20px;
-
+  margin-left:20px;
 }
 
 .cardLabel{
   font-size:13px;
   color: rgba(15,23,42,0.65);
   font-weight:700;
-      margin-left:20px;
-
+  margin-left:20px;
 }
 
 .cardValue{
@@ -859,7 +900,6 @@ h1{
   margin-top:6px;
   letter-spacing:-0.03em;
   margin-left:20px;
-
 }
 
 .cardHint{
@@ -867,7 +907,6 @@ h1{
   font-size:12px;
   color: rgba(15,23,42,0.60);
   margin-left:20px;
-
 }
 
 .panel{
@@ -876,7 +915,6 @@ h1{
   border-radius:18px;
   box-shadow: 0 18px 40px rgba(3, 15, 45, 0.06);
   overflow:hidden;
-
 }
 
 .panelHead{
@@ -886,14 +924,12 @@ h1{
   gap:12px;
   padding:14px 14px;
   border-bottom:1px solid rgba(62, 115, 237, 0.06);
-    margin-left:20px;
-
+  margin-left:20px;
 }
 
 .panelTitle{
   font-weight:900;
   letter-spacing:-0.10em;
-  
 }
 
 .panelSub{
@@ -907,12 +943,10 @@ h1{
   display:flex;
   align-items:center;
   gap:10px;
-    margin-left:20px;
-
+  margin-left:20px;
 }
 
-.panelBody{ padding:14px; 
-  }
+.panelBody{ padding:14px; }
 
 .tableWrap{
   width:100%;
@@ -922,7 +956,7 @@ h1{
 .table{
   width:100%;
   border-collapse:collapse;
-  min-width: 760px;
+  min-width: 860px;
 }
 
 .table thead th{
@@ -1028,7 +1062,7 @@ h1{
   .gridCards{ grid-template-columns: repeat(2, minmax(0,1fr)); }
   .pageHeader{ flex-direction:column; align-items:stretch; }
   .actions{ justify-content:flex-start; }
-  .table{ min-width: 680px; }
+  .table{ min-width: 760px; }
   .search{ min-width: 240px; }
 }
 @media (max-width: 520px){
@@ -1040,7 +1074,7 @@ h1{
   .searchWrap{ width:100%; justify-content: stretch; }
 }
 
-/* ✅ NOVO: estilos do card “Próxima marcação” */
+/* ✅ card “Próxima marcação” */
 .nextCard{
   display:flex;
   align-items:center;
@@ -1059,5 +1093,26 @@ h1{
   font-size:12px;
   color: rgba(15,23,42,0.65);
   font-weight:700;
+}
+
+/* ✅ NOVO: botão cancelar */
+.btnDanger{
+  border:1px solid rgba(185,28,28,0.18);
+  background: rgba(185,28,28,0.10);
+  color: rgba(185,28,28,0.95);
+  padding:9px 10px;
+  border-radius:12px;
+  font-weight:900;
+  font-size:12px;
+  cursor:pointer;
+}
+.btnDanger:hover{
+  background: rgba(185,28,28,0.14);
+  transform: translateY(-1px);
+}
+.btnDanger:active{ transform: translateY(0px); }
+.btnDanger.disabled{
+  opacity:0.55;
+  cursor:not-allowed;
 }
 `;
