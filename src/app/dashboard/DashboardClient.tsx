@@ -269,39 +269,52 @@ export default function DashboardClient() {
   };
 
   // ✅ NOVO: ação de cancelar (chama tua API /api/appointments/cancel)
-  async function cancelAppointment(a: any) {
-    const st = normalizeStatus(a.status);
-    if (st === "CANCELLED") return;
+     async function cancelAppointment(a: any) {
+  const st = normalizeStatus(a.status);
+  if (st === "CANCELLED") return;
 
-    const ok = window.confirm(
-      `Cancelar a marcação de ${a._displayName}?\n\nIsso vai cancelar no sistema e enviar mensagem de reagendar ao cliente.`
-    );
-    if (!ok) return;
+  const ok = window.confirm(
+    `Cancelar a marcação de ${a._displayName}?\n\nIsso vai cancelar no sistema e enviar mensagem de reagendar ao cliente.`
+  );
+  if (!ok) return;
 
-    try {
-      setCancellingId(a.id);
-      setError(null);
+  try {
+    setCancellingId(a.id);
+    setError(null);
 
-      const res = await fetch("/api/appointments/cancel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ appointment_id: a.id }),
-      });
+    // ✅ pega o access_token da sessão atual
+    const { data: sessionRes } = await supabase.auth.getSession();
+    const token = sessionRes.session?.access_token;
 
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || "Falha ao cancelar");
-
-      // ✅ Atualiza UI
-      setRows((prev) => prev.map((r) => (r.id === a.id ? { ...r, status: "CANCELLED" } : r)));
-
-      // ✅ garante consistência
-      await refresh();
-    } catch (e: any) {
-      setError(e?.message || "Erro ao cancelar");
-    } finally {
-      setCancellingId(null);
+    if (!token) {
+      throw new Error("Sessão inválida. Faça login novamente.");
     }
+
+    const res = await fetch("/api/appointments/cancel", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`, // ✅ obrigatório no teu setup
+      },
+      body: JSON.stringify({ appointment_id: a.id }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || "Falha ao cancelar");
+
+    // ✅ Atualiza UI
+    setRows((prev) =>
+      prev.map((r) => (r.id === a.id ? { ...r, status: "CANCELLED" } : r))
+    );
+
+    await refresh();
+  } catch (e: any) {
+    setError(e?.message || "Erro ao cancelar");
+  } finally {
+    setCancellingId(null);
   }
+}
+
 
   // ✅ dataset “enriquecido” (nome/telefone/status normalizado)
   const enriched = useMemo(() => {

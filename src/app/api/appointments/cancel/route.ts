@@ -1,5 +1,6 @@
-// src/app/api/appointments/cancel/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getUserFromAuthHeader } from "@/lib/supabase/user";
 import { sendWhatsApp } from "@/lib/whatsapp/send";
@@ -23,9 +24,10 @@ function formatPtLisbon(iso: string) {
   };
 }
 
-async function getCompanyIdFromProfiles(uid: string) {
+async function getCompanyIdFromProfiles(admin: SupabaseClient, uid: string) {
+  // mesmo fallback trio do teu dashboard
   {
-    const r = await supabaseAdmin
+    const r = await admin
       .from("profiles")
       .select("company_id")
       .eq("id", uid)
@@ -33,7 +35,7 @@ async function getCompanyIdFromProfiles(uid: string) {
     if (r.data?.company_id) return r.data.company_id as string;
   }
   {
-    const r = await supabaseAdmin
+    const r = await admin
       .from("profiles")
       .select("company_id")
       .eq("uid", uid)
@@ -41,7 +43,7 @@ async function getCompanyIdFromProfiles(uid: string) {
     if (r.data?.company_id) return r.data.company_id as string;
   }
   {
-    const r = await supabaseAdmin
+    const r = await admin
       .from("profiles")
       .select("company_id")
       .eq("user_id", uid)
@@ -53,6 +55,9 @@ async function getCompanyIdFromProfiles(uid: string) {
 
 export async function POST(req: NextRequest) {
   try {
+    // ✅ IMPORTANTÍSSIMO: teu supabaseAdmin é função
+    const admin = supabaseAdmin();
+
     // ─────────────────────────────────────
     // Auth via Bearer token
     // ─────────────────────────────────────
@@ -81,7 +86,7 @@ export async function POST(req: NextRequest) {
     // ─────────────────────────────────────
     // Company do dono
     // ─────────────────────────────────────
-    const companyId = await getCompanyIdFromProfiles(uid);
+    const companyId = await getCompanyIdFromProfiles(admin, uid);
     if (!companyId) {
       return NextResponse.json(
         { error: "User sem company (profiles.company_id)" },
@@ -90,9 +95,9 @@ export async function POST(req: NextRequest) {
     }
 
     // ─────────────────────────────────────
-    // Buscar marcação
+    // Buscar marcação (e cliente)
     // ─────────────────────────────────────
-    const apptRes = await supabaseAdmin
+    const apptRes = await admin
       .from("appointments")
       .select(
         `
@@ -112,10 +117,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!apptRes.data) {
-      return NextResponse.json(
-        { error: "Marcação não encontrada" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Marcação não encontrada" }, { status: 404 });
     }
 
     if (apptRes.data.company_id !== companyId) {
@@ -128,14 +130,14 @@ export async function POST(req: NextRequest) {
     // ─────────────────────────────────────
     // Já cancelada?
     // ─────────────────────────────────────
-    if (String(apptRes.data.status).toUpperCase().includes("CANC")) {
+    if (String(apptRes.data.status || "").toUpperCase().includes("CANC")) {
       return NextResponse.json({ ok: true, already_cancelled: true });
     }
 
     // ─────────────────────────────────────
     // Cancelar no Supabase (blindado)
     // ─────────────────────────────────────
-    const upd = await supabaseAdmin
+    const upd = await admin
       .from("appointments")
       .update({
         status: "CANCELLED",
@@ -187,4 +189,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-
