@@ -3,11 +3,17 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendWhatsApp } from "@/lib/whatsapp/send";
 import { SCHEDULE_CONFIG } from "@/config/schedule";
 
+// ✅ IMPORTANTE (BANCO / SUPABASE)
+// Para idempotência 100% (anti-retry da Meta), crie:
+// - coluna: wa_message_id (text) em message_log
+// - unique index onde wa_message_id is not null
+// (se ainda não existir, este código continua a funcionar, mas o ideal é ter o UNIQUE)
+
+const TZ = "Europe/Lisbon";
+
 // ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
-const TZ = "Europe/Lisbon";
-
 function onlyDigits(v: string) {
   return String(v || "").replace(/\D/g, "");
 }
@@ -246,6 +252,10 @@ function getGreetingByTime() {
   return "Boa noite";
 }
 
+function isUniqueViolation(err: any) {
+  return err?.code === "23505"; // Postgres unique violation
+}
+
 // ─────────────────────────────────────────────
 // Webhook Verification (GET)
 // ─────────────────────────────────────────────
@@ -287,26 +297,34 @@ export async function POST(req: NextRequest) {
 
   const db = supabaseAdmin();
 
-  // Idempotência inbound
+  // ✅ FIX 1: Idempotência inbound FORTE (anti-retry da Meta)
+  // Tenta inserir inbound com wa_message_id; se já existe (unique), retorna e NÃO envia nada.
   if (waMessageId) {
-    const { data: existing } = await db
-      .from("message_log")
-      .select("id")
-      .contains("meta", { wa_message_id: waMessageId })
-      .limit(1);
+    const ins = await db.from("message_log").insert({
+      direction: "inbound",
+      customer_phone: fromDigits,
+      body: textRaw,
+      wa_message_id: waMessageId, // ✅ coluna dedicada (crie no banco)
+      meta: { raw: message },
+    });
 
-    if (existing && existing.length > 0) {
+    if (ins.error) {
+      if (isUniqueViolation(ins.error)) {
+        return NextResponse.json({ ok: true });
+      }
+      // Se por algum motivo falhou o log inbound, não arriscar enviar resposta duplicada
+      console.error("message_log inbound insert error:", ins.error);
       return NextResponse.json({ ok: true });
     }
+  } else {
+    // fallback (sem id)
+    await db.from("message_log").insert({
+      direction: "inbound",
+      customer_phone: fromDigits,
+      body: textRaw,
+      meta: { raw: message },
+    });
   }
-
-  // Log inbound (sempre)
-  await db.from("message_log").insert({
-    direction: "inbound",
-    customer_phone: fromDigits,
-    body: textRaw,
-    meta: { wa_message_id: waMessageId ?? null, raw: message },
-  });
 
   // ─────────────────────────────────────────────
   // Encontrar customer e company
@@ -418,6 +436,7 @@ export async function POST(req: NextRequest) {
     if (ins.error) console.error("message_log outbound insert error:", ins.error);
   }
 
+  // ✅ FIX 2: Cooldown para "fora do horário" (para nunca spammar)
   async function maybeWarnOutsideHours(flow: "new" | "reschedule") {
     const { data: cfg } = await db
       .from("companies")
@@ -437,6 +456,20 @@ export async function POST(req: NextRequest) {
     const timeOk = nowHHMM >= workStart && nowHHMM <= workEnd;
 
     if (!dayOk || !timeOk) {
+      // cooldown 6h por cliente
+      const since = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+
+      const { data: recent } = await db
+        .from("message_log")
+        .select("id")
+        .eq("direction", "outbound")
+        .eq("customer_phone", fromDigits)
+        .eq("meta->>step", "outside_hours_notice")
+        .gte("created_at", since)
+        .limit(1);
+
+      if (recent && recent.length > 0) return;
+
       const msg =
         flow === "new"
           ? `⏰ Neste momento estamos fora do horário, mas podes agendar já por aqui — é rapidinho.`
@@ -515,7 +548,6 @@ export async function POST(req: NextRequest) {
   // ✅ Cancelar (cliente) - cancela pendente (se houver) ou a próxima futura
   // ─────────────────────────────────────────────
   async function cancelNextAppointment() {
-    // 1) se estiver em confirmação, cancela logo a pendente
     const pendingId = ctx?.pending_appointment_id ?? null;
     if (pendingId) {
       await db.from("appointments").update({ status: "CANCELLED" }).eq("id", pendingId);
@@ -527,7 +559,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // 2) senão, cancela a próxima futura (BOOKED/CONFIRMED)
     const { data: appt } = await db
       .from("appointments")
       .select("id,start_time,status")
@@ -559,16 +590,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // ─────────────────────────────────────────────
-  // ✅ Interceptar CANCELAR em qualquer estado
-  // ─────────────────────────────────────────────
   if (isIntentCancel(text)) {
     return await cancelNextAppointment();
   }
 
-  // ─────────────────────────────────────────────
-  // Valores
-  // ─────────────────────────────────────────────
   if (isIntentValues(text)) {
     await replyAndLog(
       `Sobre valores 💶\nO preço pode variar consoante o serviço.\n\nSe me disseres o que pretendes (ex: “corte”, “consulta”, “barba”), eu já te oriento.\n\nPara marcar, responde: *QUERO MARCAR*`,
@@ -577,9 +602,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // ─────────────────────────────────────────────
-  // Falar com humano
-  // ─────────────────────────────────────────────
   if (isIntentHuman(text)) {
     await replyAndLog(
       `Claro 👍\nVou deixar registado para a equipa falar contigo.\nSe preferires, diz-me em 1 frase o motivo (ex: “dúvida sobre horários/valores”).`,
@@ -588,9 +610,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // ─────────────────────────────────────────────
-  // ✅ SEM MENU: Cumprimento/ajuda vai direto para serviço
-  // ─────────────────────────────────────────────
+  // ✅ Cumprimento/ajuda vai direto para serviço
   if (isIntentGreeting(text) || isIntentHelp(text)) {
     await clearSession();
     await maybeWarnOutsideHours("new");
@@ -607,19 +627,17 @@ export async function POST(req: NextRequest) {
     const hi = getGreetingByTime();
 
     if (services && services.length > 0) {
-      const lines = services
-        .slice(0, 3)
-        .map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
       await replyAndLog(
         `${hi} 👋 Para marcar, diz-me qual serviço queres:\n${lines.join("\n")}\n\nResponde com 1, 2 ou 3.`,
         { flow: "new", step: "service_from_greeting" }
       );
     } else {
       await setSession("ASK_DAY", { mode: "NEW", service_id: null, duration_minutes: 30, offset: 0 });
-      await replyAndLog(
-        `${hi} 👋 Que dia preferes? (HOJE, AMANHÃ ou 10/02)`,
-        { flow: "new", step: "day_from_greeting" }
-      );
+      await replyAndLog(`${hi} 👋 Que dia preferes? (HOJE, AMANHÃ ou 10/02)`, {
+        flow: "new",
+        step: "day_from_greeting",
+      });
     }
 
     return NextResponse.json({ ok: true });
@@ -651,14 +669,14 @@ export async function POST(req: NextRequest) {
 
     const dayNum = isoDayNumberLisbon(isoDate);
     if (!workDays.includes(dayNum)) {
-      await replyAndLog(
-        `Nesse dia não atendemos 😊\nQueres escolher outro? (ex: AMANHÃ ou 10/02)`,
-        { step: "day_not_allowed", isoDate, dayNum }
-      );
+      await replyAndLog(`Nesse dia não atendemos 😊\nQueres escolher outro? (ex: AMANHÃ ou 10/02)`, {
+        step: "day_not_allowed",
+        isoDate,
+        dayNum,
+      });
       return NextResponse.json({ ok: true });
     }
 
-    // ✅ Limite diário (por dia escolhido)
     if (COMPANY_SCHEDULE.dailyLimit.enabled) {
       const total = await countAppointmentsForDay(isoDate);
       if (total >= COMPANY_SCHEDULE.dailyLimit.maxAppointments) {
@@ -678,7 +696,6 @@ export async function POST(req: NextRequest) {
       workEnd,
     });
 
-    // ✅ Pausa de almoço (remove slots que batem no intervalo)
     if (COMPANY_SCHEDULE.lunchBreak.enabled) {
       allSlots = allSlots.filter((s) => !isSlotInLunchBreak(s, isoDate));
     }
@@ -694,13 +711,11 @@ export async function POST(req: NextRequest) {
       .lte("start_time", dayEnd)
       .in("status", ["BOOKED", "CONFIRMED"]);
 
-    // ✅ capacidade por slot
     let free = allSlots.filter((s) => {
       const used = (dayAppts || []).filter((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time)).length;
       return used < COMPANY_SCHEDULE.slotCapacity;
     });
 
-    // ✅ se for HOJE, não oferecer horários no passado
     const todayIso = toISODateLisbon(new Date());
     if (isoDate === todayIso) {
       const nowHHMM = lisbonNowHHMM();
@@ -708,10 +723,10 @@ export async function POST(req: NextRequest) {
     }
 
     if (free.length === 0) {
-      await replyAndLog(
-        `Nesse dia já não tenho horários disponíveis 😕\nQueres tentar outro dia? (ex: AMANHÃ ou 12/02)`,
-        { step: "no_slots", isoDate }
-      );
+      await replyAndLog(`Nesse dia já não tenho horários disponíveis 😕\nQueres tentar outro dia? (ex: AMANHÃ ou 12/02)`, {
+        step: "no_slots",
+        isoDate,
+      });
       return NextResponse.json({ ok: true });
     }
 
@@ -725,10 +740,11 @@ export async function POST(req: NextRequest) {
       slots: free,
     });
 
-    await replyAndLog(
-      `📅 ${formatDatePt(isoDate)}\nTenho estes horários disponíveis:\n${lines}\n4) Ver mais`,
-      { step: "slots_page_0", isoDate, slotCapacity: COMPANY_SCHEDULE.slotCapacity }
-    );
+    await replyAndLog(`📅 ${formatDatePt(isoDate)}\nTenho estes horários disponíveis:\n${lines}\n4) Ver mais`, {
+      step: "slots_page_0",
+      isoDate,
+      slotCapacity: COMPANY_SCHEDULE.slotCapacity,
+    });
 
     return NextResponse.json({ ok: true });
   }
@@ -766,13 +782,11 @@ export async function POST(req: NextRequest) {
       .limit(10);
 
     if (services && services.length > 0) {
-      const lines = services
-        .slice(0, 3)
-        .map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-      await replyAndLog(
-        `🔁 Vamos reagendar 😊\nPara qual serviço?\n${lines.join("\n")}\n\nResponde com 1, 2 ou 3.`,
-        { flow: "reschedule", step: "service" }
-      );
+      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+      await replyAndLog(`🔁 Vamos reagendar 😊\nPara qual serviço?\n${lines.join("\n")}\n\nResponde com 1, 2 ou 3.`, {
+        flow: "reschedule",
+        step: "service",
+      });
     } else {
       await setSession("ASK_DAY", {
         mode: "RESCHEDULE",
@@ -782,10 +796,10 @@ export async function POST(req: NextRequest) {
         offset: 0,
       });
 
-      await replyAndLog(
-        `🔁 Vamos reagendar 😊\nQue dia preferes? (HOJE, AMANHÃ ou 10/02)`,
-        { flow: "reschedule", step: "day" }
-      );
+      await replyAndLog(`🔁 Vamos reagendar 😊\nQue dia preferes? (HOJE, AMANHÃ ou 10/02)`, {
+        flow: "reschedule",
+        step: "day",
+      });
     }
 
     return NextResponse.json({ ok: true });
@@ -806,28 +820,22 @@ export async function POST(req: NextRequest) {
       .limit(10);
 
     if (services && services.length > 0) {
-      const lines = services
-        .slice(0, 3)
-        .map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-      await replyAndLog(
-        `Perfeito 😊 Para avançarmos, diz-me qual serviço queres:\n${lines.join("\n")}\n\nResponde com 1, 2 ou 3.`,
-        { flow: "new", step: "service" }
-      );
+      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+      await replyAndLog(`Perfeito 😊 Para avançarmos, diz-me qual serviço queres:\n${lines.join("\n")}\n\nResponde com 1, 2 ou 3.`, {
+        flow: "new",
+        step: "service",
+      });
     } else {
       await setSession("ASK_DAY", { mode: "NEW", service_id: null, duration_minutes: 30, offset: 0 });
-
-      await replyAndLog(
-        `Boa! Que dia preferes? (podes responder HOJE, AMANHÃ ou 10/02)`,
-        { flow: "new", step: "day" }
-      );
+      await replyAndLog(`Boa! Que dia preferes? (podes responder HOJE, AMANHÃ ou 10/02)`, {
+        flow: "new",
+        step: "day",
+      });
     }
 
     return NextResponse.json({ ok: true });
   }
 
-  // ─────────────────────────────────────────────
-  // Confirmação SIM / NÃO (qualquer estado)
-  // ─────────────────────────────────────────────
   if (isYesNo(text)) {
     const yn = text === "NAO" ? "NÃO" : text;
     const pendingId = ctx?.pending_appointment_id ?? null;
@@ -888,13 +896,10 @@ export async function POST(req: NextRequest) {
     }
 
     if (!choice || !services[choice - 1]) {
-      const lines = services
-        .slice(0, 3)
-        .map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-      await replyAndLog(
-        `Só para confirmar 😊\nResponde com o número do serviço:\n${lines.join("\n")}`,
-        { step: "service_retry" }
-      );
+      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+      await replyAndLog(`Só para confirmar 😊\nResponde com o número do serviço:\n${lines.join("\n")}`, {
+        step: "service_retry",
+      });
       return NextResponse.json({ ok: true });
     }
 
@@ -908,10 +913,9 @@ export async function POST(req: NextRequest) {
       offset: 0,
     });
 
-    await replyAndLog(
-      `✅ Perfeito, serviço: *${svc.name}*\nAgora diz-me o dia (HOJE, AMANHÃ ou 10/02).`,
-      { step: "day" }
-    );
+    await replyAndLog(`✅ Perfeito, serviço: *${svc.name}*\nAgora diz-me o dia (HOJE, AMANHÃ ou 10/02).`, {
+      step: "day",
+    });
 
     return NextResponse.json({ ok: true });
   }
@@ -919,17 +923,15 @@ export async function POST(req: NextRequest) {
   if (state === "ASK_DAY") {
     const isoDate = parseDayPt(textRaw);
     if (!isoDate) {
-      await replyAndLog(
-        `Ainda não apanhei o dia 😅\nResponde assim, por favor: HOJE, AMANHÃ ou 10/02.`,
-        { step: "day_retry" }
-      );
+      await replyAndLog(`Ainda não apanhei o dia 😅\nResponde assim, por favor: HOJE, AMANHÃ ou 10/02.`, {
+        step: "day_retry",
+      });
       return NextResponse.json({ ok: true });
     }
     return await processDaySelection(isoDate);
   }
 
   if (state === "SHOW_SLOTS") {
-    // ✅ se mandar um dia aqui, muda o dia e já lista horários
     const maybeNewDay = parseDayPt(textRaw);
     if (maybeNewDay) {
       return await processDaySelection(maybeNewDay);
@@ -963,10 +965,9 @@ export async function POST(req: NextRequest) {
       const lines = page.map((s, i) => `${i + 1}) ${s.label}`).join("\n");
       await setSession("SHOW_SLOTS", { ...ctx, offset: nextOffset });
 
-      await replyAndLog(
-        `📅 ${formatDatePt(isoDate)}\nMais horários:\n${lines}\n4) Ver mais`,
-        { step: `slots_page_${nextOffset}` }
-      );
+      await replyAndLog(`📅 ${formatDatePt(isoDate)}\nMais horários:\n${lines}\n4) Ver mais`, {
+        step: `slots_page_${nextOffset}`,
+      });
 
       return NextResponse.json({ ok: true });
     }
@@ -984,16 +985,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // ✅ re-check pausa
     if (COMPANY_SCHEDULE.lunchBreak.enabled && isSlotInLunchBreak(chosen, isoDate)) {
-      await replyAndLog(
-        `⏸️ Esse horário cai na pausa de almoço.\nEscolhe outro (1, 2, 3) ou 4 para ver mais.`,
-        { step: "lunch_break_recheck_block", isoDate, chosen: chosen.label }
-      );
+      await replyAndLog(`⏸️ Esse horário cai na pausa de almoço.\nEscolhe outro (1, 2, 3) ou 4 para ver mais.`, {
+        step: "lunch_break_recheck_block",
+        isoDate,
+        chosen: chosen.label,
+      });
       return NextResponse.json({ ok: true });
     }
 
-    // ✅ re-check limite diário
     if (COMPANY_SCHEDULE.dailyLimit.enabled) {
       const total = await countAppointmentsForDay(isoDate);
       if (total >= COMPANY_SCHEDULE.dailyLimit.maxAppointments) {
@@ -1006,23 +1006,23 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ✅ anti-bypass: re-check capacidade do slot no DB antes de gravar
     const usedNow = await countOverlappingAppointments(chosen.startISO, chosen.endISO);
     if (usedNow >= COMPANY_SCHEDULE.slotCapacity) {
-      await replyAndLog(
-        `⚠️ Esse horário acabou de ficar cheio.\nEscolhe outro (1, 2, 3) ou 4 para ver mais.`,
-        { step: "slot_capacity_full", isoDate, chosen: chosen.label, usedNow, cap: COMPANY_SCHEDULE.slotCapacity }
-      );
+      await replyAndLog(`⚠️ Esse horário acabou de ficar cheio.\nEscolhe outro (1, 2, 3) ou 4 para ver mais.`, {
+        step: "slot_capacity_full",
+        isoDate,
+        chosen: chosen.label,
+        usedNow,
+        cap: COMPANY_SCHEDULE.slotCapacity,
+      });
       return NextResponse.json({ ok: true });
     }
 
-    // reagendar: cancelar antiga
     const rescheduleFromId = ctx?.reschedule_from_appointment_id ?? null;
     if (ctx?.mode === "RESCHEDULE" && rescheduleFromId) {
       await db.from("appointments").update({ status: "CANCELLED" }).eq("id", rescheduleFromId);
     }
 
-    // criar BOOKED
     const insert = await db
       .from("appointments")
       .insert({
@@ -1055,9 +1055,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // ─────────────────────────────────────────────
   // Fallback IDLE: vai direto para serviço (sem menu)
-  // ─────────────────────────────────────────────
   if (state === "IDLE") {
     await clearSession();
     await maybeWarnOutsideHours("new");
@@ -1072,19 +1070,14 @@ export async function POST(req: NextRequest) {
       .limit(10);
 
     if (services && services.length > 0) {
-      const lines = services
-        .slice(0, 3)
-        .map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-      await replyAndLog(
-        `Para marcar, escolhe o serviço:\n${lines.join("\n")}\n\nResponde com 1, 2 ou 3.`,
-        { flow: "new", step: "service_fallback" }
-      );
+      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+      await replyAndLog(`Para marcar, escolhe o serviço:\n${lines.join("\n")}\n\nResponde com 1, 2 ou 3.`, {
+        flow: "new",
+        step: "service_fallback",
+      });
     } else {
       await setSession("ASK_DAY", { mode: "NEW", service_id: null, duration_minutes: 30, offset: 0 });
-      await replyAndLog(
-        `Que dia preferes? (HOJE, AMANHÃ ou 10/02)`,
-        { flow: "new", step: "day_fallback" }
-      );
+      await replyAndLog(`Que dia preferes? (HOJE, AMANHÃ ou 10/02)`, { flow: "new", step: "day_fallback" });
     }
   }
 
