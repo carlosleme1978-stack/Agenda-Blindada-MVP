@@ -1,3 +1,4 @@
+// src/app/api/appointments/cancel/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -24,8 +25,19 @@ function formatPtLisbon(iso: string) {
   };
 }
 
+// ✅ supabase pode devolver customers como array (join) → pegamos o primeiro
+function pickCustomerName(customers: any): string {
+  if (!customers) return "";
+  if (Array.isArray(customers)) return String(customers?.[0]?.name || "");
+  return String(customers?.name || "");
+}
+function pickCustomerPhone(customers: any): string {
+  if (!customers) return "";
+  if (Array.isArray(customers)) return String(customers?.[0]?.phone || "");
+  return String(customers?.phone || "");
+}
+
 async function getCompanyIdFromProfiles(admin: SupabaseClient, uid: string) {
-  // mesmo fallback trio do teu dashboard
   {
     const r = await admin
       .from("profiles")
@@ -55,7 +67,7 @@ async function getCompanyIdFromProfiles(admin: SupabaseClient, uid: string) {
 
 export async function POST(req: NextRequest) {
   try {
-    // ✅ IMPORTANTÍSSIMO: teu supabaseAdmin é função
+    // ✅ teu supabaseAdmin é função
     const admin = supabaseAdmin();
 
     // ─────────────────────────────────────
@@ -67,7 +79,6 @@ export async function POST(req: NextRequest) {
     if (!auth?.user?.id) {
       return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
     }
-
     const uid = auth.user.id;
 
     // ─────────────────────────────────────
@@ -115,9 +126,11 @@ export async function POST(req: NextRequest) {
     if (apptRes.error) {
       return NextResponse.json({ error: apptRes.error.message }, { status: 500 });
     }
-
     if (!apptRes.data) {
-      return NextResponse.json({ error: "Marcação não encontrada" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Marcação não encontrada" },
+        { status: 404 }
+      );
     }
 
     if (apptRes.data.company_id !== companyId) {
@@ -157,10 +170,10 @@ export async function POST(req: NextRequest) {
     // ─────────────────────────────────────
     const displayName =
       (apptRes.data.customer_name_snapshot || "").trim() ||
-      (apptRes.data.customers?.name || "").trim() ||
+      pickCustomerName((apptRes.data as any).customers).trim() ||
       "Cliente";
 
-    const rawPhone = (apptRes.data.customers?.phone || "").trim();
+    const rawPhone = pickCustomerPhone((apptRes.data as any).customers).trim();
     const phone = onlyDigits(rawPhone);
 
     if (phone) {
