@@ -81,7 +81,7 @@ function isIntentHuman(text: string) {
 function isIntentMark(text: string) {
   return (
     text.includes("QUERO MARCAR") ||
-    text.includes("GOSTARIA DE MARCAR") || // ✅ novo
+    text.includes("GOSTARIA DE MARCAR") ||
     text === "MARCAR" ||
     text === "AGENDAR" ||
     text.includes("AGENDAR") ||
@@ -96,6 +96,15 @@ function isIntentReschedule(text: string) {
     text.includes("REMARCAR") ||
     text === "REAGENDAR" ||
     text === "REMARCAR"
+  );
+}
+
+function isIntentCancel(text: string) {
+  return (
+    text.includes("CANCELAR") ||
+    text === "CANCELA" ||
+    text.includes("DESMARCAR") ||
+    text.includes("ANULAR")
   );
 }
 
@@ -235,20 +244,6 @@ function getGreetingByTime() {
   if (h < 12) return "Bom dia";
   if (h < 18) return "Boa tarde";
   return "Boa noite";
-}
-
-function buildMainMenu(companyName?: string | null) {
-  const hi = getGreetingByTime();
-  const nameLine = companyName ? ` da *${companyName}*` : "";
-  return `${hi} 👋 Sou o assistente${nameLine}.
-
-Como posso ajudar?
-1) Marcar
-2) Reagendar
-3) Valores
-4) Falar com alguém
-
-(Responde com 1, 2, 3 ou 4)`;
 }
 
 // ─────────────────────────────────────────────
@@ -517,42 +512,63 @@ export async function POST(req: NextRequest) {
   }
 
   // ─────────────────────────────────────────────
-  // Menu humano (IDLE / greeting / help)
+  // ✅ Cancelar (cliente) - cancela pendente (se houver) ou a próxima futura
   // ─────────────────────────────────────────────
-  async function replyMenu(step = "menu") {
-    const { data: c0 } = await db.from("companies").select("name").eq("id", companyId).maybeSingle();
-    await replyAndLog(buildMainMenu(c0?.name ?? null), { step });
-  }
-
-  // Se a pessoa estiver IDLE e mandar "1/2/3/4", tratar como menu
-  if (state === "IDLE") {
-    if (text === "1") {
-      // cair no fluxo de marcação
-    } else if (text === "2") {
-      // cair no fluxo de reagendar
-    } else if (text === "3") {
-      // valores
+  async function cancelNextAppointment() {
+    // 1) se estiver em confirmação, cancela logo a pendente
+    const pendingId = ctx?.pending_appointment_id ?? null;
+    if (pendingId) {
+      await db.from("appointments").update({ status: "CANCELLED" }).eq("id", pendingId);
       await replyAndLog(
-        `Sobre valores 💶\nO preço pode variar consoante o serviço.\n\nSe me disseres o que pretendes (ex: “corte”, “consulta”, “barba”), eu já te oriento.\n\nPara marcar, responde: *QUERO MARCAR*`,
-        { step: "values" }
+        "✅ Ok! Cancelei a tua marcação. Se quiseres marcar outro horário, diz: *QUERO MARCAR*.",
+        { step: "cancel_ok_pending", appointment_id: pendingId }
       );
-      return NextResponse.json({ ok: true });
-    } else if (text === "4") {
-      await replyAndLog(
-        `Claro 👍\nVou deixar registado para a equipa falar contigo.\nSe preferires, diz-me em 1 frase o motivo (ex: “dúvida sobre horários/valores”).`,
-        { step: "handoff_human" }
-      );
+      await clearSession();
       return NextResponse.json({ ok: true });
     }
-  }
 
-  // Cumprimentos / ajuda (em qualquer estado, mas principalmente em IDLE)
-  if (isIntentGreeting(text) || isIntentHelp(text)) {
-    await replyMenu("menu_greeting");
+    // 2) senão, cancela a próxima futura (BOOKED/CONFIRMED)
+    const { data: appt } = await db
+      .from("appointments")
+      .select("id,start_time,status")
+      .eq("company_id", companyId)
+      .eq("customer_id", customer.id)
+      .in("status", ["BOOKED", "CONFIRMED"])
+      .gte("start_time", new Date().toISOString())
+      .order("start_time", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (!appt?.id) {
+      await replyAndLog(
+        "Não encontrei nenhuma marcação futura para cancelar. Se quiseres marcar, diz: *QUERO MARCAR*.",
+        { step: "cancel_none" }
+      );
+      await clearSession();
+      return NextResponse.json({ ok: true });
+    }
+
+    await db.from("appointments").update({ status: "CANCELLED" }).eq("id", appt.id);
+
+    await replyAndLog(
+      "✅ Ok! A tua marcação foi cancelada. Se quiseres marcar outro horário, diz: *QUERO MARCAR*.",
+      { step: "cancel_ok", appointment_id: appt.id }
+    );
+
+    await clearSession();
     return NextResponse.json({ ok: true });
   }
 
+  // ─────────────────────────────────────────────
+  // ✅ Interceptar CANCELAR em qualquer estado
+  // ─────────────────────────────────────────────
+  if (isIntentCancel(text)) {
+    return await cancelNextAppointment();
+  }
+
+  // ─────────────────────────────────────────────
   // Valores
+  // ─────────────────────────────────────────────
   if (isIntentValues(text)) {
     await replyAndLog(
       `Sobre valores 💶\nO preço pode variar consoante o serviço.\n\nSe me disseres o que pretendes (ex: “corte”, “consulta”, “barba”), eu já te oriento.\n\nPara marcar, responde: *QUERO MARCAR*`,
@@ -561,12 +577,51 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
+  // ─────────────────────────────────────────────
   // Falar com humano
+  // ─────────────────────────────────────────────
   if (isIntentHuman(text)) {
     await replyAndLog(
       `Claro 👍\nVou deixar registado para a equipa falar contigo.\nSe preferires, diz-me em 1 frase o motivo (ex: “dúvida sobre horários/valores”).`,
       { step: "handoff_human" }
     );
+    return NextResponse.json({ ok: true });
+  }
+
+  // ─────────────────────────────────────────────
+  // ✅ SEM MENU: Cumprimento/ajuda vai direto para serviço
+  // ─────────────────────────────────────────────
+  if (isIntentGreeting(text) || isIntentHelp(text)) {
+    await clearSession();
+    await maybeWarnOutsideHours("new");
+    await setSession("ASK_SERVICE", { mode: "NEW", offset: 0 });
+
+    const { data: services } = await db
+      .from("services")
+      .select("id,name,duration_minutes")
+      .eq("company_id", companyId)
+      .eq("active", true)
+      .order("created_at", { ascending: true })
+      .limit(10);
+
+    const hi = getGreetingByTime();
+
+    if (services && services.length > 0) {
+      const lines = services
+        .slice(0, 3)
+        .map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+      await replyAndLog(
+        `${hi} 👋 Para marcar, diz-me qual serviço queres:\n${lines.join("\n")}\n\nResponde com 1, 2 ou 3.`,
+        { flow: "new", step: "service_from_greeting" }
+      );
+    } else {
+      await setSession("ASK_DAY", { mode: "NEW", service_id: null, duration_minutes: 30, offset: 0 });
+      await replyAndLog(
+        `${hi} 👋 Que dia preferes? (HOJE, AMANHÃ ou 10/02)`,
+        { flow: "new", step: "day_from_greeting" }
+      );
+    }
+
     return NextResponse.json({ ok: true });
   }
 
@@ -679,13 +734,9 @@ export async function POST(req: NextRequest) {
   }
 
   // ─────────────────────────────────────────────
-  // ✅ SEMPRE permite reiniciar o fluxo
+  // Reiniciar fluxo (MARCAR/REAGENDAR) por intenção
   // ─────────────────────────────────────────────
-  // Se veio via menu numérico em IDLE
-  const isMenuReschedule = state === "IDLE" && text === "2";
-  const isMenuMark = state === "IDLE" && text === "1";
-
-  if (isIntentReschedule(text) || isMenuReschedule) {
+  if (isIntentReschedule(text)) {
     await clearSession();
     await maybeWarnOutsideHours("reschedule");
 
@@ -740,7 +791,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  if (isIntentMark(text) || isMenuMark) {
+  if (isIntentMark(text)) {
     await clearSession();
     await maybeWarnOutsideHours("new");
 
@@ -1004,9 +1055,37 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // Se não entendeu e está IDLE, mostra menu
+  // ─────────────────────────────────────────────
+  // Fallback IDLE: vai direto para serviço (sem menu)
+  // ─────────────────────────────────────────────
   if (state === "IDLE") {
-    await replyMenu("menu_fallback");
+    await clearSession();
+    await maybeWarnOutsideHours("new");
+    await setSession("ASK_SERVICE", { mode: "NEW", offset: 0 });
+
+    const { data: services } = await db
+      .from("services")
+      .select("id,name,duration_minutes")
+      .eq("company_id", companyId)
+      .eq("active", true)
+      .order("created_at", { ascending: true })
+      .limit(10);
+
+    if (services && services.length > 0) {
+      const lines = services
+        .slice(0, 3)
+        .map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
+      await replyAndLog(
+        `Para marcar, escolhe o serviço:\n${lines.join("\n")}\n\nResponde com 1, 2 ou 3.`,
+        { flow: "new", step: "service_fallback" }
+      );
+    } else {
+      await setSession("ASK_DAY", { mode: "NEW", service_id: null, duration_minutes: 30, offset: 0 });
+      await replyAndLog(
+        `Que dia preferes? (HOJE, AMANHÃ ou 10/02)`,
+        { flow: "new", step: "day_fallback" }
+      );
+    }
   }
 
   return NextResponse.json({ ok: true });
