@@ -256,6 +256,20 @@ function isUniqueViolation(err: any) {
   return err?.code === "23505"; // Postgres unique violation
 }
 
+// ✅ NOVO: formatação de preço e paginação 3/3
+function formatPriceEur(price_cents: number | null | undefined) {
+  if (price_cents == null) return "";
+  const v = (price_cents / 100).toFixed(2).replace(".", ",");
+  return `${v}€`;
+}
+
+function pick3Lines<T>(arr: T[], offset: number, fmt: (item: T, i: number) => string) {
+  const page = arr.slice(offset, offset + 3);
+  const lines = page.map((item, i) => fmt(item, i)).join("\n");
+  const hasMore = offset + 3 < arr.length;
+  return { page, lines, hasMore };
+}
+
 // ─────────────────────────────────────────────
 // Webhook Verification (GET)
 // ─────────────────────────────────────────────
@@ -312,7 +326,6 @@ export async function POST(req: NextRequest) {
       if (isUniqueViolation(ins.error)) {
         return NextResponse.json({ ok: true });
       }
-      // Se por algum motivo falhou o log inbound, não arriscar enviar resposta duplicada
       console.error("message_log inbound insert error:", ins.error);
       return NextResponse.json({ ok: true });
     }
@@ -485,9 +498,7 @@ export async function POST(req: NextRequest) {
   async function getCompanySchedule() {
     const { data } = await db
       .from("companies")
-      .select(
-        "lunch_break_enabled,lunch_break_start,lunch_break_end,daily_limit_enabled,daily_limit_max,slot_capacity"
-      )
+      .select("lunch_break_enabled,lunch_break_start,lunch_break_end,daily_limit_enabled,daily_limit_max,slot_capacity")
       .eq("id", companyId)
       .maybeSingle();
 
@@ -545,16 +556,116 @@ export async function POST(req: NextRequest) {
   }
 
   // ─────────────────────────────────────────────
+  // ✅ Categorias → Serviços (menus)
+  // ─────────────────────────────────────────────
+  async function sendCategoryMenu(nextCtx: any, offset = 0, header?: string) {
+    const { data: cats, error } = await db
+      .from("service_categories")
+      .select("id,name,sort_order,active,created_at")
+      .eq("company_id", companyId)
+      .eq("active", true)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("load categories error:", error);
+      await replyAndLog("Ups… tive um problema a carregar as categorias. Tenta novamente daqui a pouco 🙏", {
+        step: "categories_load_error",
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    const categories = (cats ?? []) as any[];
+
+    if (!categories.length) {
+      // fallback se ainda não existem categorias: vai para serviços como antes
+      await setSession("ASK_SERVICE", { ...nextCtx, offset: 0, category_id: null, services: [] });
+      await replyAndLog("Ainda não tenho categorias cadastradas. Diz-me qual serviço queres (responde 1, 2 ou 3).", {
+        step: "no_categories_fallback",
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    const { lines, hasMore } = pick3Lines(categories, offset, (c, i) => `${i + 1}) ${c.name}`);
+
+    await setSession("ASK_CATEGORY", {
+      ...nextCtx,
+      categories,
+      offset,
+    });
+
+    const top = header ? `${header}\n` : "";
+    const moreLine = hasMore ? `\n4) Ver mais` : "";
+
+    await replyAndLog(`${top}Escolhe uma categoria:\n${lines}${moreLine}\n\nResponde com 1, 2 ou 3.`, {
+      step: "category_menu",
+      offset,
+    });
+
+    return NextResponse.json({ ok: true });
+  }
+
+  async function sendServiceMenuFromCategory(nextCtx: any, categoryId: string, offset = 0, header?: string) {
+    const { data: services, error } = await db
+      .from("services")
+      .select("id,name,duration_minutes,price_cents,sort_order,active,category_id,created_at")
+      .eq("company_id", companyId)
+      .eq("active", true)
+      .eq("category_id", categoryId)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("load services by category error:", error);
+      await replyAndLog("Ups… tive um problema a carregar os serviços. Tenta novamente daqui a pouco 🙏", {
+        step: "services_load_error",
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    const list = (services ?? []) as any[];
+
+    if (!list.length) {
+      await replyAndLog("Esta categoria ainda não tem serviços. Escolhe outra categoria 😊", { step: "category_empty" });
+      return await sendCategoryMenu(nextCtx, 0);
+    }
+
+    const { lines, hasMore } = pick3Lines(list, offset, (s, i) => {
+      const price = formatPriceEur(s.price_cents);
+      const pricePart = price ? ` - ${price}` : "";
+      return `${i + 1}) ${s.name} (${s.duration_minutes}min${pricePart})`;
+    });
+
+    await setSession("ASK_SERVICE", {
+      ...nextCtx,
+      services: list,
+      category_id: categoryId,
+      offset,
+    });
+
+    const top = header ? `${header}\n` : "";
+    const moreLine = hasMore ? `\n4) Ver mais` : "";
+
+    await replyAndLog(`${top}Agora escolhe o serviço:\n${lines}${moreLine}\n\nResponde com 1, 2 ou 3.`, {
+      step: "service_menu_by_category",
+      category_id: categoryId,
+      offset,
+    });
+
+    return NextResponse.json({ ok: true });
+  }
+
+  // ─────────────────────────────────────────────
   // ✅ Cancelar (cliente) - cancela pendente (se houver) ou a próxima futura
   // ─────────────────────────────────────────────
   async function cancelNextAppointment() {
     const pendingId = ctx?.pending_appointment_id ?? null;
     if (pendingId) {
       await db.from("appointments").update({ status: "CANCELLED" }).eq("id", pendingId);
-      await replyAndLog(
-        "✅ Ok! Cancelei a tua marcação. Se quiseres marcar outro horário, diz: *QUERO MARCAR*.",
-        { step: "cancel_ok_pending", appointment_id: pendingId }
-      );
+      await replyAndLog("✅ Ok! Cancelei a tua marcação. Se quiseres marcar outro horário, diz: *QUERO MARCAR*.", {
+        step: "cancel_ok_pending",
+        appointment_id: pendingId,
+      });
       await clearSession();
       return NextResponse.json({ ok: true });
     }
@@ -581,10 +692,10 @@ export async function POST(req: NextRequest) {
 
     await db.from("appointments").update({ status: "CANCELLED" }).eq("id", appt.id);
 
-    await replyAndLog(
-      "✅ Ok! A tua marcação foi cancelada. Se quiseres marcar outro horário, diz: *QUERO MARCAR*.",
-      { step: "cancel_ok", appointment_id: appt.id }
-    );
+    await replyAndLog("✅ Ok! A tua marcação foi cancelada. Se quiseres marcar outro horário, diz: *QUERO MARCAR*.", {
+      step: "cancel_ok",
+      appointment_id: appt.id,
+    });
 
     await clearSession();
     return NextResponse.json({ ok: true });
@@ -596,7 +707,7 @@ export async function POST(req: NextRequest) {
 
   if (isIntentValues(text)) {
     await replyAndLog(
-      `Sobre valores 💶\nO preço pode variar consoante o serviço.\n\nSe me disseres o que pretendes (ex: “corte”, “consulta”, “barba”), eu já te oriento.\n\nPara marcar, responde: *QUERO MARCAR*`,
+      `Sobre valores 💶\nO preço pode variar consoante o serviço.\n\nPara ver os serviços e valores, responde: *QUERO MARCAR* (eu mostro as categorias e serviços).\n\nSe quiseres falar com alguém, diz: *ATENDENTE*.`,
       { step: "values" }
     );
     return NextResponse.json({ ok: true });
@@ -610,37 +721,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // ✅ Cumprimento/ajuda vai direto para serviço
+  // ✅ Cumprimento/ajuda vai direto para categoria
   if (isIntentGreeting(text) || isIntentHelp(text)) {
     await clearSession();
     await maybeWarnOutsideHours("new");
-    await setSession("ASK_SERVICE", { mode: "NEW", offset: 0 });
-
-    const { data: services } = await db
-      .from("services")
-      .select("id,name,duration_minutes")
-      .eq("company_id", companyId)
-      .eq("active", true)
-      .order("created_at", { ascending: true })
-      .limit(10);
 
     const hi = getGreetingByTime();
-
-    if (services && services.length > 0) {
-      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-      await replyAndLog(
-        `${hi} 👋 Para marcar, diz-me qual serviço queres:\n${lines.join("\n")}\n\nResponde com 1, 2 ou 3.`,
-        { flow: "new", step: "service_from_greeting" }
-      );
-    } else {
-      await setSession("ASK_DAY", { mode: "NEW", service_id: null, duration_minutes: 30, offset: 0 });
-      await replyAndLog(`${hi} 👋 Que dia preferes? (HOJE, AMANHÃ ou 10/02)`, {
-        flow: "new",
-        step: "day_from_greeting",
-      });
-    }
-
-    return NextResponse.json({ ok: true });
+    return await sendCategoryMenu({ mode: "NEW", offset: 0 }, 0, `${hi} 👋`);
   }
 
   // ─────────────────────────────────────────────
@@ -767,75 +854,23 @@ export async function POST(req: NextRequest) {
       .limit(1)
       .maybeSingle();
 
-    await setSession("ASK_SERVICE", {
-      mode: "RESCHEDULE",
-      reschedule_from_appointment_id: nextAppt?.id ?? null,
-      offset: 0,
-    });
-
-    const { data: services } = await db
-      .from("services")
-      .select("id,name,duration_minutes")
-      .eq("company_id", companyId)
-      .eq("active", true)
-      .order("created_at", { ascending: true })
-      .limit(10);
-
-    if (services && services.length > 0) {
-      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-      await replyAndLog(`🔁 Vamos reagendar 😊\nPara qual serviço?\n${lines.join("\n")}\n\nResponde com 1, 2 ou 3.`, {
-        flow: "reschedule",
-        step: "service",
-      });
-    } else {
-      await setSession("ASK_DAY", {
-        mode: "RESCHEDULE",
-        reschedule_from_appointment_id: nextAppt?.id ?? null,
-        service_id: null,
-        duration_minutes: 30,
-        offset: 0,
-      });
-
-      await replyAndLog(`🔁 Vamos reagendar 😊\nQue dia preferes? (HOJE, AMANHÃ ou 10/02)`, {
-        flow: "reschedule",
-        step: "day",
-      });
-    }
-
-    return NextResponse.json({ ok: true });
+    return await sendCategoryMenu(
+      { mode: "RESCHEDULE", reschedule_from_appointment_id: nextAppt?.id ?? null, offset: 0 },
+      0,
+      "🔁 Vamos reagendar 😊"
+    );
   }
 
   if (isIntentMark(text)) {
     await clearSession();
     await maybeWarnOutsideHours("new");
 
-    await setSession("ASK_SERVICE", { mode: "NEW", offset: 0 });
-
-    const { data: services } = await db
-      .from("services")
-      .select("id,name,duration_minutes")
-      .eq("company_id", companyId)
-      .eq("active", true)
-      .order("created_at", { ascending: true })
-      .limit(10);
-
-    if (services && services.length > 0) {
-      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-      await replyAndLog(`Perfeito 😊 Para avançarmos, diz-me qual serviço queres:\n${lines.join("\n")}\n\nResponde com 1, 2 ou 3.`, {
-        flow: "new",
-        step: "service",
-      });
-    } else {
-      await setSession("ASK_DAY", { mode: "NEW", service_id: null, duration_minutes: 30, offset: 0 });
-      await replyAndLog(`Boa! Que dia preferes? (podes responder HOJE, AMANHÃ ou 10/02)`, {
-        flow: "new",
-        step: "day",
-      });
-    }
-
-    return NextResponse.json({ ok: true });
+    return await sendCategoryMenu({ mode: "NEW", offset: 0 }, 0, "Perfeito 😊");
   }
 
+  // ─────────────────────────────────────────────
+  // Confirmação SIM/NÃO
+  // ─────────────────────────────────────────────
   if (isYesNo(text)) {
     const yn = text === "NAO" ? "NÃO" : text;
     const pendingId = ctx?.pending_appointment_id ?? null;
@@ -878,32 +913,99 @@ export async function POST(req: NextRequest) {
   // ─────────────────────────────────────────────
   // State machine
   // ─────────────────────────────────────────────
+
+  // ✅ NOVO: ASK_CATEGORY (listar categorias / paginação / escolher)
+  if (state === "ASK_CATEGORY") {
+    const categories: any[] = Array.isArray(ctx?.categories) ? ctx.categories : [];
+    const offset: number = Number(ctx?.offset) || 0;
+
+    const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
+    const n = Number(nRaw);
+
+    if (!categories.length) {
+      return await sendCategoryMenu({ mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 }, 0);
+    }
+
+    if (n === 4) {
+      const nextOffset = offset + 3;
+      if (nextOffset >= categories.length) {
+        await replyAndLog("Não há mais categorias. Escolhe 1, 2 ou 3 da lista acima 😊", { step: "no_more_categories" });
+        return NextResponse.json({ ok: true });
+      }
+      return await sendCategoryMenu(
+        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 },
+        nextOffset
+      );
+    }
+
+    if (![1, 2, 3].includes(n)) {
+      await replyAndLog("Responde 1, 2, 3 ou 4 (para ver mais categorias).", { step: "category_retry" });
+      return NextResponse.json({ ok: true });
+    }
+
+    const chosen = categories[offset + (n - 1)];
+    if (!chosen?.id) {
+      await replyAndLog("Essa categoria não está disponível. Responde 4 para ver mais 😊", { step: "category_invalid" });
+      return NextResponse.json({ ok: true });
+    }
+
+    return await sendServiceMenuFromCategory(
+      { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null },
+      chosen.id,
+      0,
+      `✅ Categoria: *${chosen.name}*`
+    );
+  }
+
+  // ✅ MODIFICADO: ASK_SERVICE agora usa ctx.services (já filtrado por categoria) e tem paginação + preço
   if (state === "ASK_SERVICE") {
-    const choiceRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
-    const choice = Number(choiceRaw);
+    const services: any[] = Array.isArray(ctx?.services) ? ctx.services : [];
+    const offset: number = Number(ctx?.offset) || 0;
+    const categoryId: string | null = ctx?.category_id ?? null;
 
-    const { data: services } = await db
-      .from("services")
-      .select("id,name,duration_minutes")
-      .eq("company_id", companyId)
-      .eq("active", true)
-      .order("created_at", { ascending: true });
+    // se perdeu contexto, volta pra categorias
+    if (!categoryId) {
+      return await sendCategoryMenu(
+        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 },
+        0
+      );
+    }
 
-    if (!services || services.length === 0) {
-      await setSession("ASK_DAY", { ...ctx, duration_minutes: 30, offset: 0 });
-      await replyAndLog(`Boa! Que dia preferes? (HOJE, AMANHÃ ou 10/02)`, { step: "day" });
+    // se não tem a lista, recarrega do banco
+    if (!services.length) {
+      return await sendServiceMenuFromCategory(
+        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null },
+        categoryId,
+        0
+      );
+    }
+
+    const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
+    const n = Number(nRaw);
+
+    if (n === 4) {
+      const nextOffset = offset + 3;
+      if (nextOffset >= services.length) {
+        await replyAndLog("Não há mais serviços. Escolhe 1, 2 ou 3 da lista acima 😊", { step: "no_more_services" });
+        return NextResponse.json({ ok: true });
+      }
+      return await sendServiceMenuFromCategory(
+        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null },
+        categoryId,
+        nextOffset
+      );
+    }
+
+    if (![1, 2, 3].includes(n)) {
+      await replyAndLog("Responde 1, 2, 3 ou 4 (para ver mais serviços).", { step: "service_retry" });
       return NextResponse.json({ ok: true });
     }
 
-    if (!choice || !services[choice - 1]) {
-      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-      await replyAndLog(`Só para confirmar 😊\nResponde com o número do serviço:\n${lines.join("\n")}`, {
-        step: "service_retry",
-      });
+    const svc = services[offset + (n - 1)];
+    if (!svc?.id) {
+      await replyAndLog("Esse serviço não está disponível. Responde 4 para ver mais 😊", { step: "service_invalid" });
       return NextResponse.json({ ok: true });
     }
-
-    const svc = services[choice - 1];
 
     await setSession("ASK_DAY", {
       ...ctx,
@@ -913,7 +1015,10 @@ export async function POST(req: NextRequest) {
       offset: 0,
     });
 
-    await replyAndLog(`✅ Perfeito, serviço: *${svc.name}*\nAgora diz-me o dia (HOJE, AMANHÃ ou 10/02).`, {
+    const price = formatPriceEur(svc.price_cents);
+    const pricePart = price ? ` (${price})` : "";
+
+    await replyAndLog(`✅ Serviço: *${svc.name}* (${svc.duration_minutes}min)${pricePart}\nAgora diz-me o dia (HOJE, AMANHÃ ou 10/02).`, {
       step: "day",
     });
 
@@ -1055,30 +1160,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // Fallback IDLE: vai direto para serviço (sem menu)
+  // Fallback IDLE: vai direto para categorias (sem menu extra)
   if (state === "IDLE") {
     await clearSession();
     await maybeWarnOutsideHours("new");
-    await setSession("ASK_SERVICE", { mode: "NEW", offset: 0 });
 
-    const { data: services } = await db
-      .from("services")
-      .select("id,name,duration_minutes")
-      .eq("company_id", companyId)
-      .eq("active", true)
-      .order("created_at", { ascending: true })
-      .limit(10);
-
-    if (services && services.length > 0) {
-      const lines = services.slice(0, 3).map((s, i) => `${i + 1}) ${s.name} (${s.duration_minutes}min)`);
-      await replyAndLog(`Para marcar, escolhe o serviço:\n${lines.join("\n")}\n\nResponde com 1, 2 ou 3.`, {
-        flow: "new",
-        step: "service_fallback",
-      });
-    } else {
-      await setSession("ASK_DAY", { mode: "NEW", service_id: null, duration_minutes: 30, offset: 0 });
-      await replyAndLog(`Que dia preferes? (HOJE, AMANHÃ ou 10/02)`, { flow: "new", step: "day_fallback" });
-    }
+    return await sendCategoryMenu({ mode: "NEW", offset: 0 }, 0, "Olá 😊");
   }
 
   return NextResponse.json({ ok: true });
