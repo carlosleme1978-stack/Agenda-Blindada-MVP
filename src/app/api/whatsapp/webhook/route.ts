@@ -361,7 +361,7 @@ export async function POST(req: NextRequest) {
     // 1) Preferência total: phone_number_id (Cloud API)
     if (toPhoneNumberId) {
       try {
-        const r = await db
+        const r = await (db as any)
           .from("companies")
           .select("id")
           .eq("wa_phone_number_id" as any, String(toPhoneNumberId) as any)
@@ -396,7 +396,7 @@ export async function POST(req: NextRequest) {
 
     // 3) Último fallback: primeira company
     try {
-      const r = await db
+      const r = await (db as any)
         .from("companies")
         .select("id")
         .order("created_at", { ascending: true })
@@ -416,7 +416,7 @@ export async function POST(req: NextRequest) {
 
   // ✅ Procura o customer dentro da company resolvida (NÃO procurar global, para não "pegar" a company errada)
   {
-    const r = await db
+    const r = await (db as any)
       .from("customers")
       .select("id, phone, company_id, name")
       .eq("company_id", resolvedCompanyId)
@@ -942,7 +942,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!appt) {
-      const r = await db
+      const r = await (db as any)
         .from("appointments")
         .select("id,status")
         .eq("company_id", companyId)
