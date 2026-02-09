@@ -328,7 +328,7 @@ export async function POST(req: NextRequest) {
       customer_phone: fromDigits,
       body: textRaw,
       wa_message_id: waMessageId, // ✅ coluna dedicada (crie no banco)
-      meta: { raw: payload, wa: { phone_number_id: toPhoneNumberId ?? null, display_phone_number: toDisplayPhone ?? null } },
+      meta: { raw: body, wa: { phone_number_id: toPhoneNumberId ?? null, display_phone_number: toDisplayPhone ?? null } },
     });
 
     if (ins.error) {
