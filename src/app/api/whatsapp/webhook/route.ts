@@ -657,7 +657,7 @@ export async function POST(req: NextRequest) {
     const top = header ? `${header}\n` : "";
     const moreLine = hasMore ? `\n0) Ver mais` : "";
     await replyAndLog(
-  `${top}Escolhe uma categoria:\n${lines}${moreLine}\n9) Categorias\n\nResponde com o número.`,
+  `${top}Escolhe uma categoria:\n${lines}${moreLine}\n9) Categorias\n9) Categorias\n\nResponde com o número.`,
   { step: "category_menu", offset }
 );
 
@@ -692,7 +692,7 @@ export async function POST(req: NextRequest) {
     const { lines, hasMore } = pick3Lines(list, offset, (s, i) => {
       const price = formatPriceEur(s.price_cents);
       const pricePart = price ? ` - ${price}` : "";
-      return `${i + 1}) ${s.name} (${s.duration_minutes}min${pricePart})`;
+      return `${i}) ${s.name} (${s.duration_minutes}min${pricePart})`;
     });
 
     await setSession("ASK_SERVICE", {
@@ -703,9 +703,9 @@ export async function POST(req: NextRequest) {
     });
 
     const top = header ? `${header}\n` : "";
-    const moreLine = hasMore ? `\n4) Ver mais` : "";
+    const moreLine = hasMore ? `\n0) Ver mais` : "";
 
-    await replyAndLog(`${top}Agora escolhe o serviço:\n${lines}${moreLine}\n\nResponde com 1, 2 ou 3.`, {
+    await replyAndLog(`${top}Agora escolhe o serviço:\n${lines}${moreLine}\n9) Categorias\n\nResponde com o número.`, {
       step: "service_menu_by_category",
       category_id: categoryId,
       offset,
@@ -982,29 +982,49 @@ export async function POST(req: NextRequest) {
     const n = Number(nRaw);
 
     if (!categories.length) {
-      return await sendCategoryMenu({ mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 }, 0);
+      return await sendCategoryMenu(
+        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 },
+        0
+      );
     }
 
-    if (n === 4) {
-      const nextOffset = offset + 3;
-      if (nextOffset >= categories.length) {
-        await replyAndLog("Não há mais categorias. Escolhe 1, 2 ou 3 da lista acima 😊", { step: "no_more_categories" });
+    const pageLen = Math.min(3, Math.max(0, categories.length - offset));
+    const hasMore = offset + pageLen < categories.length;
+    const minChoice = offset + 1;
+    const maxChoice = offset + pageLen;
+
+    // 9 = voltar ao início das categorias
+    if (n === 9) {
+      return await sendCategoryMenu(
+        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 },
+        0
+      );
+    }
+
+    // 0 = ver mais (próxima página)
+    if (n === 0) {
+      if (!hasMore) {
+        await replyAndLog("Não há mais categorias. Escolhe um número da lista acima 😊", { step: "no_more_categories" });
         return NextResponse.json({ ok: true });
       }
       return await sendCategoryMenu(
         { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 },
-        nextOffset
+        offset + 3
       );
     }
 
-    if (![1, 2, 3].includes(n)) {
-      await replyAndLog("Responde 1, 2, 3 ou 4 (para ver mais categorias).", { step: "category_retry" });
+    // Escolha válida: número real mostrado (contínuo)
+    if (!Number.isFinite(n) || n < minChoice || n > maxChoice) {
+      const hint = hasMore
+        ? "Responde com um número da lista (0 = ver mais, 9 = voltar)."
+        : "Responde com um número da lista (9 = voltar).";
+      await replyAndLog(hint, { step: "category_retry" });
       return NextResponse.json({ ok: true });
     }
 
-    const chosen = categories[offset + (n - 1)];
+    const chosen = categories[n - 1];
     if (!chosen?.id) {
-      await replyAndLog("Essa categoria não está disponível. Responde 4 para ver mais 😊", { step: "category_invalid" });
+      await replyAndLog("Essa categoria não está disponível. Escolhe um número da lista 😊", { step: "category_invalid" });
       return NextResponse.json({ ok: true });
     }
 
@@ -1016,11 +1036,22 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ✅ MODIFICADO: ASK_SERVICE agora usa ctx.services (já filtrado por categoria) e tem paginação + preço
+// ✅ MODIFICADO: ASK_SERVICE agora usa ctx.services (já filtrado por categoria) e tem paginação + preço
   if (state === "ASK_SERVICE") {
     const services: any[] = Array.isArray(ctx?.services) ? ctx.services : [];
     const offset: number = Number(ctx?.offset) || 0;
     const categoryId: string | null = ctx?.category_id ?? null;
+
+    const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
+    const n = Number(nRaw);
+
+    // 9 = voltar às categorias
+    if (n === 9) {
+      return await sendCategoryMenu(
+        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 },
+        0
+      );
+    }
 
     // se perdeu contexto, volta pra categorias
     if (!categoryId) {
@@ -1039,30 +1070,35 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
-    const n = Number(nRaw);
+    const pageLen = Math.min(3, Math.max(0, services.length - offset));
+    const hasMore = offset + pageLen < services.length;
+    const minChoice = offset + 1;
+    const maxChoice = offset + pageLen;
 
-    if (n === 4) {
-      const nextOffset = offset + 3;
-      if (nextOffset >= services.length) {
-        await replyAndLog("Não há mais serviços. Escolhe 1, 2 ou 3 da lista acima 😊", { step: "no_more_services" });
+    // 0 = ver mais serviços
+    if (n === 0) {
+      if (!hasMore) {
+        await replyAndLog("Não há mais serviços. Escolhe um número da lista acima 😊", { step: "no_more_services" });
         return NextResponse.json({ ok: true });
       }
       return await sendServiceMenuFromCategory(
         { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null },
         categoryId,
-        nextOffset
+        offset + 3
       );
     }
 
-    if (![1, 2, 3].includes(n)) {
-      await replyAndLog("Responde 1, 2, 3 ou 4 (para ver mais serviços).", { step: "service_retry" });
+    if (!Number.isFinite(n) || n < minChoice || n > maxChoice) {
+      const hint = hasMore
+        ? "Responde com um número da lista (0 = ver mais, 9 = categorias)."
+        : "Responde com um número da lista (9 = categorias).";
+      await replyAndLog(hint, { step: "service_retry" });
       return NextResponse.json({ ok: true });
     }
 
-    const svc = services[offset + (n - 1)];
+    const svc = services[n - 1];
     if (!svc?.id) {
-      await replyAndLog("Esse serviço não está disponível. Responde 4 para ver mais 😊", { step: "service_invalid" });
+      await replyAndLog("Esse serviço não está disponível. Escolhe um número da lista 😊", { step: "service_invalid" });
       return NextResponse.json({ ok: true });
     }
 
@@ -1084,7 +1120,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  if (state === "ASK_DAY") {
+if (state === "ASK_DAY") {
     const isoDate = parseDayPt(textRaw);
     if (!isoDate) {
       await replyAndLog(`Ainda não apanhei o dia 😅\nResponde assim, por favor: HOJE, AMANHÃ ou 10/02.`, {
