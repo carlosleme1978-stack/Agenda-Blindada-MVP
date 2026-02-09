@@ -159,6 +159,7 @@ export async function POST(req: Request) {
 
     // ─────────────────────────────────────────────
     // Appointment (com snapshot do nome)
+    // ✅ FIX: snapshot usa incomingName OU customer.name
     // ─────────────────────────────────────────────
     const { data: appointment, error: apptErr } = await db
       .from("appointments")
@@ -168,7 +169,7 @@ export async function POST(req: Request) {
         start_time: start.toISOString(),
         end_time: end.toISOString(),
         status: "BOOKED",
-        customer_name_snapshot: (customerName || "").trim() || null,
+        customer_name_snapshot: incomingName || customer.name || null,
       })
       .select("id, start_time, customer_name_snapshot")
       .single();
@@ -179,10 +180,9 @@ export async function POST(req: Request) {
 
     // ─────────────────────────────────────────────
     // Template variables
+    // ✅ FIX: prioriza incomingName, depois customer.name
     // ─────────────────────────────────────────────
-    // Preferimos o snapshot / nome recebido agora para comunicação
-    const clientName =
-      appointment.customer_name_snapshot || customer.name || "Cliente";
+    const clientName = incomingName || customer.name || "Cliente";
 
     const formattedDate = new Date(appointment.start_time).toLocaleDateString(
       "pt-PT",
