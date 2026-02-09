@@ -532,7 +532,7 @@ export async function POST(req: NextRequest) {
         .gte("created_at", since)
         .limit(1);
 
-      if (recent && recent.length > 0) return true;
+      if (recent && recent.length > 0) return false;
 
       const msg =
         flow === "new"
@@ -778,10 +778,7 @@ export async function POST(req: NextRequest) {
   // ✅ Cumprimento/ajuda vai direto para categoria
   if (isIntentGreeting(text) || isIntentHelp(text)) {
     await clearSession();
-    const outside = await maybeWarnOutsideHours("new");
-    if (outside) {
-      return NextResponse.json({ ok: true });
-    }
+    await maybeWarnOutsideHours("new");
 const hi = getGreetingByTime();
     return await sendCategoryMenu({ mode: "NEW", offset: 0 }, 0, `${hi} 👋`);
   }
@@ -897,10 +894,7 @@ const hi = getGreetingByTime();
   // ─────────────────────────────────────────────
   if (isIntentReschedule(text)) {
     await clearSession();
-    const outside = await maybeWarnOutsideHours("reschedule");
-    if (outside) {
-      return NextResponse.json({ ok: true });
-    }
+    await maybeWarnOutsideHours("reschedule");
 const { data: nextAppt } = await db
       .from("appointments")
       .select("id,status,start_time")
@@ -921,10 +915,7 @@ const { data: nextAppt } = await db
 
   if (isIntentMark(text)) {
     await clearSession();
-    const outside = await maybeWarnOutsideHours("new");
-    if (outside) {
-      return NextResponse.json({ ok: true });
-    }
+    await maybeWarnOutsideHours("new");
 return await sendCategoryMenu({ mode: "NEW", offset: 0 }, 0, "Perfeito 😊");
   }
 
@@ -1223,10 +1214,7 @@ return await sendCategoryMenu({ mode: "NEW", offset: 0 }, 0, "Perfeito 😊");
   // Fallback IDLE: vai direto para categorias (sem menu extra)
   if (state === "IDLE") {
     await clearSession();
-    const outside = await maybeWarnOutsideHours("new");
-    if (outside) {
-      return NextResponse.json({ ok: true });
-    }
+    await maybeWarnOutsideHours("new");
 return await sendCategoryMenu({ mode: "NEW", offset: 0 }, 0, "Olá 😊");
   }
 
