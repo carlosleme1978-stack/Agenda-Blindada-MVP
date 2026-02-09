@@ -300,35 +300,20 @@ export async function POST(req: NextRequest) {
   const value = change?.value;
 
   const message = value?.messages?.[0];
-  if (!message?.text?.body || !message?.from) {
+  if (!message?.text?.body) {
     return NextResponse.json({ ok: true });
   }
 
-  // ─────────────────────────────────────────────
-  // Identificar corretamente: quem enviou (cliente) e para qual número da empresa (destino)
-  // WhatsApp Cloud API costuma trazer o cliente em value.contacts[0].wa_id e o número da empresa em value.metadata.display_phone_number
-  const metaDisplay: string | undefined = value?.metadata?.display_phone_number;
-  const metaPhoneId: string | undefined = value?.metadata?.phone_number_id;
-  const businessDigits = metaDisplay ? onlyDigits(metaDisplay) : null;
-  const contactWaid: string | undefined = value?.contacts?.[0]?.wa_id;
-  const rawSender: string = contactWaid || message.from;
-  let rawFrom: string = rawSender;
-  let fromDigits = onlyDigits(rawSender);
+  // ✅ WhatsApp Cloud: o número do cliente pode vir em contacts[0].wa_id (mais confiável)
+  const contactWaId: string | undefined = value?.contacts?.[0]?.wa_id;
+  const senderWa: string = contactWaId || message.from;
+  if (!senderWa) return NextResponse.json({ ok: true });
 
-  // Se por algum motivo o provider mandar "from" como o número da empresa,
-  // tentamos usar message.to como cliente (quando disponível).
-  const maybeTo: any = (message as any).to;
-  if (businessDigits && fromDigits === businessDigits && maybeTo) {
-    const alt = onlyDigits(String(maybeTo));
-    if (alt && alt !== businessDigits) {
-      // sobrescreve (cliente real)
-      // @ts-ignore
-      rawFrom = String(maybeTo);
-      // @ts-ignore
-      fromDigits = alt;
-    }
-  }
+  const fromDigits = onlyDigits(senderWa);
 
+  // ✅ Metadados do número da empresa (destino) — essencial para resolver a company correta
+  const toPhoneNumberId: string | undefined = value?.metadata?.phone_number_id;
+  const toDisplayPhone: string | undefined = value?.metadata?.display_phone_number;
   const textRaw = normalizeInboundText(message.text.body);
   const text = stripDiacritics(textRaw);
   const waMessageId: string | undefined = message.id;
@@ -366,39 +351,75 @@ export async function POST(req: NextRequest) {
   // ─────────────────────────────────────────────
   // Encontrar customer e company
   // ─────────────────────────────────────────────
+  const candidates = [fromDigits, `+${fromDigits}`];
+
 
   // ─────────────────────────────────────────────
-  // Resolver company pelo número destino (recomendado em multi-tenant)
-  // Se não existir coluna/ajuste no banco, cai no fallback (primeira company)
+  // Resolve a company correta pelo "TO" (número da empresa)
   // ─────────────────────────────────────────────
   async function resolveCompanyId(): Promise<string | null> {
-    // 1) Tenta por phone_number_id (Cloud API)
-    if (metaPhoneId) {
-      const r = await db.from("companies").select("id").eq("wa_phone_number_id", metaPhoneId).limit(1).maybeSingle();
+    // 1) Preferência total: phone_number_id (Cloud API)
+    if (toPhoneNumberId) {
+      try {
+        const r = await db
+          .from("companies")
+          .select("id")
+          .eq("wa_phone_number_id", String(toPhoneNumberId))
+          .limit(1)
+          .maybeSingle();
+
+        if (!r.error && r.data?.id) return r.data.id;
+      } catch (_) {}
+    }
+
+    // 2) Fallback: display_phone_number (normalizado)
+    const displayDigits = toDisplayPhone ? onlyDigits(toDisplayPhone) : null;
+    if (displayDigits) {
+      const cols = ["whatsapp_phone", "phone", "wa_display_phone_number"];
+      for (const col of cols) {
+        try {
+          // NOTE: o Postgrest typings pode explodir com coluna dinâmica em .eq(...)
+          // (ts(2589) "type instantiation is excessively deep").
+          // Como aqui é apenas lookup de company por colunas alternativas,
+          // fazemos cast para "any" só nesse trecho.
+          const q: any = (db as any).from("companies").select("id");
+          const r = await q
+            .eq(col, displayDigits)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (!r.error && r.data?.id) return r.data.id;
+        } catch (_) {}
+      }
+    }
+
+    // 3) Último fallback: primeira company
+    try {
+      const r = await db
+        .from("companies")
+        .select("id")
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
       if (!r.error && r.data?.id) return r.data.id;
-    }
-
-    // 2) Tenta por display_phone_number (E.164 digits)
-    if (businessDigits) {
-      const r2 = await db.from("companies").select("id").eq("whatsapp_phone", businessDigits).limit(1).maybeSingle();
-      if (!r2.error && r2.data?.id) return r2.data.id;
-
-      const r3 = await db.from("companies").select("id").eq("phone", businessDigits).limit(1).maybeSingle();
-      if (!r3.error && r3.data?.id) return r3.data.id;
-    }
+    } catch (_) {}
 
     return null;
   }
 
   const resolvedCompanyId = await resolveCompanyId();
-  const candidates = [fromDigits, `+${fromDigits}`];
+  if (!resolvedCompanyId) return NextResponse.json({ ok: true });
 
   let customer: any = null;
 
+  // ✅ Procura o customer dentro da company resolvida (NÃO procurar global, para não "pegar" a company errada)
   {
     const r = await db
       .from("customers")
       .select("id, phone, company_id, name")
+      .eq("company_id", resolvedCompanyId)
       .in("phone", candidates)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -407,22 +428,12 @@ export async function POST(req: NextRequest) {
     customer = r.data ?? null;
   }
 
+  // ✅ Se não existir, cria na company correta
   if (!customer) {
-    const { data: company } = resolvedCompanyId
-      ? await db.from("companies").select("id").eq("id", resolvedCompanyId).maybeSingle()
-      : await db
-          .from("companies")
-          .select("id")
-          .order("created_at", { ascending: true })
-          .limit(1)
-          .maybeSingle();
-
-    if (!company?.id) return NextResponse.json({ ok: true });
-
     const created = await db
       .from("customers")
       .insert({
-        company_id: company.id,
+        company_id: resolvedCompanyId,
         phone: fromDigits,
         name: null,
         consent_whatsapp: true,
@@ -433,7 +444,7 @@ export async function POST(req: NextRequest) {
     customer = created.data;
   }
 
-  const companyId = customer.company_id;
+  const companyId = resolvedCompanyId;
 
   // ─────────────────────────────────────────────
   // Sessão do chat (estado)
