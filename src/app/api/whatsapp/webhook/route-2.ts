@@ -501,7 +501,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ✅ FIX 2: Cooldown para "fora do horário" (para nunca spammar)
-  async function maybeWarnOutsideHours(flow: "new" | "reschedule") {
+  async function maybeWarnOutsideHours(flow: "new" | "reschedule"): Promise<boolean> {
     const { data: cfg } = await db
       .from("companies")
       .select("work_start, work_end, work_days")
@@ -532,7 +532,7 @@ export async function POST(req: NextRequest) {
         .gte("created_at", since)
         .limit(1);
 
-      if (recent && recent.length > 0) return;
+      if (recent && recent.length > 0) return true;
 
       const msg =
         flow === "new"
@@ -540,8 +540,12 @@ export async function POST(req: NextRequest) {
           : `⏰ Neste momento estamos fora do horário, mas podes reagendar já por aqui — é rapidinho.`;
 
       await replyAndLog(msg, { step: "outside_hours_notice" });
-    }
-  }
+    
+      return true;
+}
+  
+  return false;
+}
 
   // ─────────────────────────────────────────────
   // Carregar agenda por cliente (fallback no schedule.ts)
