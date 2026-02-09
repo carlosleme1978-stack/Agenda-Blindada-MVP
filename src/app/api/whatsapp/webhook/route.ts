@@ -364,7 +364,7 @@ export async function POST(req: NextRequest) {
         const r = await db
           .from("companies")
           .select("id")
-          .eq("wa_phone_number_id" as any, String(toPhoneNumberId) as any))
+          .eq("wa_phone_number_id" as any, String(toPhoneNumberId) as any)
           .limit(1)
           .maybeSingle();
 
