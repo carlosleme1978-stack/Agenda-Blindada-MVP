@@ -118,6 +118,33 @@ function isYesNo(text: string) {
   return text === "SIM" || text === "NÃO" || text === "NAO";
 }
 
+// ✅ NOVO: validação simples de nome (WhatsApp)
+function normalizeNameInput(raw: string) {
+  const s = String(raw || "")
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // remove pontuações no começo/fim
+  const trimmed = s.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "").trim();
+
+  // mantém letras, espaços, hífen e apóstrofo (nomes PT)
+  const cleaned = trimmed.replace(/[^\p{L} '\-]/gu, "").replace(/\s+/g, " ").trim();
+  return cleaned;
+}
+
+function isValidPersonName(name: string) {
+  const n = String(name || "").trim();
+  if (n.length < 2 || n.length > 60) return false;
+  // evita respostas tipo "OK", "SIM", "1", etc.
+  const up = stripDiacritics(n).toUpperCase();
+  if (up === "SIM" || up === "NAO" || up === "NÃO" || up === "OK") return false;
+  // precisa ter pelo menos 2 letras
+  const letters = n.match(/\p{L}/gu) ?? [];
+  return letters.length >= 2;
+}
+
 function toISODateLisbon(date: Date) {
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: TZ,
@@ -447,6 +474,14 @@ export async function POST(req: NextRequest) {
   const companyId = resolvedCompanyId;
 
   // ─────────────────────────────────────────────
+  // ✅ Nome do cliente (primeira vez)
+  // ─────────────────────────────────────────────
+  function customerHasName() {
+    const n = String(customer?.name ?? "").trim();
+    return n.length >= 2;
+  }
+
+  // ─────────────────────────────────────────────
   // Sessão do chat (estado)
   // ─────────────────────────────────────────────
   const { data: session0 } = await db
@@ -458,6 +493,33 @@ export async function POST(req: NextRequest) {
 
   const state: string = session0?.state || "IDLE";
   const ctx: any = session0?.context || {};
+
+  // ─────────────────────────────────────────────
+  // ✅ GUARDA GLOBAL: se o cliente ainda não tem nome, pedir antes de continuar.
+  // Evita o caso em que existe um state antigo (ex: ASK_CATEGORY) e o fluxo segue
+  // sem gravar o nome (ficando NULL no Supabase).
+  // ─────────────────────────────────────────────
+  if (!customerHasName() && state !== "ASK_NAME") {
+    const hi = getGreetingByTime();
+    const header = `${hi} 👋\nPara continuarmos a tua marcação, qual é o teu *nome*, por favor?`;
+
+    // guarda o contexto atual para retomar no menu (mínimo necessário)
+    const nextMode = ctx?.mode ?? "NEW";
+    const nextCtx = {
+      mode: nextMode,
+      reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null,
+      offset: 0,
+    };
+
+    await setSession("ASK_NAME", {
+      next_action: "CATEGORY_MENU",
+      next_ctx: nextCtx,
+      next_header: header,
+    });
+
+    await replyAndLog(header, { step: "ask_name" });
+    return NextResponse.json({ ok: true });
+  }
 
   async function setSession(nextState: string, nextCtx: any) {
     const upd = await db
@@ -786,7 +848,17 @@ export async function POST(req: NextRequest) {
     await maybeWarnOutsideHours("new");
 
     const hi = getGreetingByTime();
-    return await sendCategoryMenu({ mode: "NEW", offset: 0 }, 0, `${hi} 👋`);
+    if (!customerHasName()) {
+      await setSession("ASK_NAME", {
+        next_action: "CATEGORY_MENU",
+        next_ctx: { mode: "NEW", offset: 0 },
+        next_header: `${hi} 👋\nPara continuarmos a tua marcação, qual é o teu *nome*, por favor?`,
+      });
+      await replyAndLog(`${hi} 👋\nPara continuarmos a tua marcação, qual é o teu *nome*, por favor?`, { step: "ask_name" });
+      return NextResponse.json({ ok: true });
+    }
+
+    return await sendCategoryMenu({ mode: "NEW", offset: 0 }, 0, `${hi} 👋 Olá, ${customer.name}!`);
   }
 
   // ─────────────────────────────────────────────
@@ -913,10 +985,21 @@ export async function POST(req: NextRequest) {
       .limit(1)
       .maybeSingle();
 
+    if (!customerHasName()) {
+      const header = "🔁 Vamos reagendar 😊\nPara continuarmos, qual é o teu *nome*, por favor?";
+      await setSession("ASK_NAME", {
+        next_action: "CATEGORY_MENU",
+        next_ctx: { mode: "RESCHEDULE", reschedule_from_appointment_id: nextAppt?.id ?? null, offset: 0 },
+        next_header: header,
+      });
+      await replyAndLog(header, { step: "ask_name" });
+      return NextResponse.json({ ok: true });
+    }
+
     return await sendCategoryMenu(
       { mode: "RESCHEDULE", reschedule_from_appointment_id: nextAppt?.id ?? null, offset: 0 },
       0,
-      "🔁 Vamos reagendar 😊"
+      `🔁 Vamos reagendar, ${customer.name} 😊`
     );
   }
 
@@ -924,7 +1007,18 @@ export async function POST(req: NextRequest) {
     await clearSession();
     await maybeWarnOutsideHours("new");
 
-    return await sendCategoryMenu({ mode: "NEW", offset: 0 }, 0, "Perfeito 😊");
+    if (!customerHasName()) {
+      const header = "Perfeito 😊\nPara continuarmos a tua marcação, qual é o teu *nome*, por favor?";
+      await setSession("ASK_NAME", {
+        next_action: "CATEGORY_MENU",
+        next_ctx: { mode: "NEW", offset: 0 },
+        next_header: header,
+      });
+      await replyAndLog(header, { step: "ask_name" });
+      return NextResponse.json({ ok: true });
+    }
+
+    return await sendCategoryMenu({ mode: "NEW", offset: 0 }, 0, `Perfeito, ${customer.name} 😊`);
   }
 
   // ─────────────────────────────────────────────
@@ -972,6 +1066,46 @@ export async function POST(req: NextRequest) {
   // ─────────────────────────────────────────────
   // State machine
   // ─────────────────────────────────────────────
+
+  // ✅ NOVO: ASK_NAME (primeira vez) — grava nome e continua o fluxo
+  if (state === "ASK_NAME") {
+    const proposed = normalizeNameInput(message.text.body || "");
+
+    if (!isValidPersonName(proposed)) {
+      await replyAndLog("Só para confirmar 😊 qual é o teu *nome*? (ex: João, Maria)", { step: "ask_name_retry" });
+      return NextResponse.json({ ok: true });
+    }
+
+    // grava no customer
+    const upd = await db
+      .from("customers")
+      .update({ name: proposed })
+      .eq("id", customer.id)
+      .select("id,name")
+      .maybeSingle();
+
+    if (upd.error) console.error("customers.update(name) error:", upd.error);
+
+    customer.name = proposed; // mantém em memória neste request
+
+    const nextCtx = (ctx?.next_ctx as any) ?? { mode: "NEW", offset: 0 };
+
+    // aviso fora do horário (respeita modo)
+    if ((nextCtx?.mode ?? "NEW") === "RESCHEDULE") {
+      await maybeWarnOutsideHours("reschedule");
+    } else {
+      await maybeWarnOutsideHours("new");
+    }
+
+    await replyAndLog(`Obrigado, ${proposed} 😊` , { step: "ask_name_ok" });
+
+    // continua para categorias
+    return await sendCategoryMenu(
+      { ...nextCtx, offset: 0 },
+      0,
+      `Perfeito, ${proposed} 😊`
+    );
+  }
 
   // ✅ NOVO: ASK_CATEGORY (listar categorias / paginação / escolher)
   if (state === "ASK_CATEGORY") {

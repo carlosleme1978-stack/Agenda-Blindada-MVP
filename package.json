@@ -8,9 +8,8 @@
     "build": "next build",
     "start": "next start",
     "reminders:24h": "tsx scripts/send_reminders_24h.ts",
-"thanks": "tsx scripts/send_thank_you.ts",
-"rebook": "tsx scripts/send_rebook.ts"
-
+    "thanks": "tsx scripts/send_thank_you.ts",
+    "rebook": "tsx scripts/send_rebook.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.8.0",
@@ -21,7 +20,7 @@
     "stripe": "^20.3.0"
   },
   "devDependencies": {
-    "@types/node": "^22.10.1",
+    "@types/node": "^22.19.10",
     "@types/react": "19.2.10",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
