@@ -1097,7 +1097,7 @@ export async function POST(req: NextRequest) {
       await maybeWarnOutsideHours("new");
     }
 
-    await replyAndLog(`Obrigado, ${proposed} 😊` , { step: "ask_name_ok" });
+    // await replyAndLog(`Obrigado, ${proposed} 😊` , { step: "ask_name_ok" });
 
     // continua para categorias
     return await sendCategoryMenu(
