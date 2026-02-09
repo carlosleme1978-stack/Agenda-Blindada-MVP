@@ -68,7 +68,8 @@ export async function POST(req: Request) {
       })
       .eq("company_id", companyId)
       .eq("id", appointmentId)
-      .in("status", ["BOOKED", "CONFIRMED", "PENDING"])
+      // .in("status", ["BOOKED", "CONFIRMED", "PENDING"])
+      .neq("status", "CANCELLED")
       .select("id, status")
       .maybeSingle();
 
