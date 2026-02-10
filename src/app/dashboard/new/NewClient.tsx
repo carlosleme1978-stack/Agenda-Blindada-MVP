@@ -19,7 +19,7 @@ export default function NewClient() {
   useEffect(() => {
     // Protect route: requires active subscription + onboarding complete.
     (async () => {
-      const sb = supabaseBrowser();
+      const sb = supabaseBrowser;
       await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
     })();
   }, []);
@@ -56,7 +56,7 @@ export default function NewClient() {
     setLoading(true);
 
     try {
-      const sb = supabaseBrowser();
+      const sb = supabaseBrowser;
 
       // Route gate: must be active + onboarded.
       const access = await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });

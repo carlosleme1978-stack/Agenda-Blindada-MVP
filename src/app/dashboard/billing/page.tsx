@@ -15,7 +15,7 @@ type Company = {
 };
 
 export default function BillingPage() {
-  const sb = useMemo(() => supabaseBrowser(), []);
+  const sb = supabaseBrowser;
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState<null | "basic" | "pro">(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -89,9 +89,13 @@ export default function BillingPage() {
     setPaying(plan);
     setMsg(null);
     try {
+      const { data: sessionRes } = await sb.auth.getSession();
+      const token = sessionRes.session?.access_token;
+      if (!token) throw new Error("Sessão inválida. Faça login novamente.");
+
       const res = await fetch(`/api/stripe/checkout/${plan}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ companyId: company.id }),
       });
 
@@ -106,6 +110,7 @@ export default function BillingPage() {
       setPaying(null);
     }
   }
+
 
   const topBar = (
     <div className="billTop" style={{ maxWidth: 820, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>

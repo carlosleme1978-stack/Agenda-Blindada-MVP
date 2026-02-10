@@ -29,7 +29,7 @@ type ServiceRow = {
 type Tab = "services" | "categories";
 
 export default function ServicesClient() {
-  const sb = useMemo(() => supabaseBrowser(), []);
+  const sb = supabaseBrowser;
   const [company, setCompany] = useState<Company | null>(null);
 
   const [loading, setLoading] = useState(true);

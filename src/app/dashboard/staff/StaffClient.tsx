@@ -15,7 +15,7 @@ type StaffRow = {
 };
 
 export default function StaffClient() {
-  const sb = useMemo(() => supabaseBrowser(), []);
+  const sb = supabaseBrowser;
   const [company, setCompany] = useState<Company | null>(null);
 
   const [loading, setLoading] = useState(true);

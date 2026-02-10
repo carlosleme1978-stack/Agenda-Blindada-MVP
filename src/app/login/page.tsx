@@ -50,18 +50,31 @@ export default function Login() {
   } as const;
 
   async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setMsg(null);
-    setLoading(true);
-    try {
-      const sb = supabaseBrowser();
-      const { error } = await sb.auth.signInWithPassword({ email, password });
-      if (error) return setMsg(error.message);
-      r.push("/dashboard");
-    } finally {
-      setLoading(false);
+  e.preventDefault();
+  setMsg(null);
+  setLoading(true);
+
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      setMsg(json?.error || "Falha no login");
+      return;
     }
+
+    r.push("/dashboard");
+    r.refresh(); // garante que cookies SSR sejam lidos
+  } finally {
+    setLoading(false);
   }
+}
+
 
   return (
     <main

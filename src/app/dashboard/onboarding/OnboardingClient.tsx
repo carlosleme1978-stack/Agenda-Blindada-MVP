@@ -25,7 +25,7 @@ const days = [
 ];
 
 export default function OnboardingClient() {
-  const sb = useMemo(() => supabaseBrowser(), []);
+  const sb = useMemo(() => supabaseBrowser, []);
   const r = useRouter();
 
   const [company, setCompany] = useState<Company | null>(null);

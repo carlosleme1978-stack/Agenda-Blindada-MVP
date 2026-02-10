@@ -768,7 +768,7 @@ const premiumCss = `
 .container{
   max-width: 1100px;
   margin: 0 auto;
-  padding: 22px 18px;
+  padding: 18px;
 }
 
 .pageHeader{
