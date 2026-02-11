@@ -1,7 +1,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 
 export async function getAuthContext(req?: Request) {
-  const supabase = createSupabaseServer();
+  const supabase = await createSupabaseServer();
 
   const { data: userRes, error: userErr } = await supabase.auth.getUser();
   if (userErr || !userRes.user) throw new Error("Não autorizado");

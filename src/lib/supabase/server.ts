@@ -1,8 +1,10 @@
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
-export function createSupabaseServer() {
-  const cookieStore = cookies();
+// Next.js (15+) pode retornar Promise em cookies(). Para compatibilidade,
+// mantemos essa fábrica como async e sempre aguardamos.
+export async function createSupabaseServer() {
+  const cookieStore = await cookies();
 
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
