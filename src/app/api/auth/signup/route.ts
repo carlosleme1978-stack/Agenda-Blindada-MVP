@@ -12,33 +12,65 @@ export async function POST(req: Request) {
       email?: string;
       password?: string;
       ownerName?: string;
+      accessCode?: string;
     };
 
-    const companyName = String(body.companyName ?? "").trim();
+    const accessCode = String(body.accessCode ?? "").trim();
+    const companyNameInput = String(body.companyName ?? "").trim();
+    const ownerName = String(body.ownerName ?? "").trim();
     const email = cleanEmail(String(body.email ?? ""));
     const password = String(body.password ?? "");
-    const ownerName = String(body.ownerName ?? "").trim();
 
-    if (!companyName || !email || !password) {
-      return NextResponse.json(
-        { error: "companyName, email e password são obrigatórios" },
-        { status: 400 }
-      );
+    if (!accessCode) {
+      return NextResponse.json({ error: "Cadastro somente com código de acesso (accessCode)." }, { status: 403 });
+    }
+
+    if (!email || !password) {
+      return NextResponse.json({ error: "email e password são obrigatórios" }, { status: 400 });
     }
 
     const admin = supabaseAdmin();
 
-    // 1) create company
-    const { data: company, error: cErr } = await admin
-      .from("companies")
-      .insert({ name: companyName })
-      .select("id")
+    // 0) Validate code
+    const { data: codeRow, error: codeErr } = await admin
+      .from("access_codes")
+      .select("code,status,expires_at,company_name,plan,staff_limit")
+      .eq("code", accessCode)
       .single();
-    if (cErr) {
-      return NextResponse.json({ error: cErr.message }, { status: 400 });
+
+    if (codeErr || !codeRow) {
+      return NextResponse.json({ error: "Código não encontrado." }, { status: 404 });
     }
 
-    // 2) create auth user
+    if (String(codeRow.status).toUpperCase() !== "ACTIVE") {
+      return NextResponse.json({ error: "Código já usado/expirado." }, { status: 403 });
+    }
+
+    if (codeRow.expires_at && new Date(codeRow.expires_at) < new Date()) {
+      return NextResponse.json({ error: "Código expirado." }, { status: 403 });
+    }
+
+    const companyName = companyNameInput || String(codeRow.company_name ?? "").trim();
+    if (!companyName) {
+      return NextResponse.json({ error: "companyName é obrigatório (ou defina company_name no access code)." }, { status: 400 });
+    }
+
+    // 1) Create company
+    const { data: company, error: cErr } = await admin
+      .from("companies")
+      .insert({
+        name: companyName,
+        plan: codeRow.plan ?? "basic",
+        staff_limit: codeRow.staff_limit ?? 1,
+      })
+      .select("id")
+      .single();
+
+    if (cErr || !company?.id) {
+      return NextResponse.json({ error: cErr?.message ?? "Falha ao criar empresa" }, { status: 400 });
+    }
+
+    // 2) Create auth user
     const { data: userRes, error: uErr } = await admin.auth.admin.createUser({
       email,
       password,
@@ -48,27 +80,57 @@ export async function POST(req: Request) {
         owner_name: ownerName,
       },
     });
+
     if (uErr || !userRes.user) {
-      // rollback company to keep db clean
       await admin.from("companies").delete().eq("id", company.id);
       return NextResponse.json({ error: uErr?.message ?? "Falha ao criar user" }, { status: 400 });
     }
 
-    // 3) create profile
+    // 3) Create profile
     const { error: pErr } = await admin
       .from("profiles")
       .insert({ id: userRes.user.id, company_id: company.id, role: "owner" });
 
     if (pErr) {
-      // rollback user + company
       await admin.auth.admin.deleteUser(userRes.user.id);
       await admin.from("companies").delete().eq("id", company.id);
       return NextResponse.json({ error: pErr.message }, { status: 400 });
     }
 
-    // Optional: create default staff & service for onboarding
-    await admin.from("staff").insert({ company_id: company.id, name: ownerName || "Dono", role: "owner" });
-    await admin.from("services").insert({ company_id: company.id, name: "Serviço", duration_minutes: 30, active: true });
+    // 4) Consume access code with concurrency protection
+    const iso = new Date().toISOString();
+    const { data: consumed, error: consumeErr } = await admin
+      .from("access_codes")
+      .update({ status: "USED", used_by_user_id: userRes.user.id, used_at: iso })
+      .eq("code", accessCode)
+      .eq("status", "ACTIVE")
+      .or(`expires_at.is.null,expires_at.gt.${iso}`)
+      .select("code,status")
+      .single();
+
+    if (consumeErr || !consumed) {
+      // Rollback all
+      await admin.auth.admin.deleteUser(userRes.user.id);
+      await admin.from("profiles").delete().eq("id", userRes.user.id);
+      await admin.from("companies").delete().eq("id", company.id);
+      return NextResponse.json({ error: "Não foi possível consumir o código. Use outro código." }, { status: 409 });
+    }
+
+    // 5) Create defaults (1 staff, 1 service)
+    const { data: staff } = await admin
+      .from("staff")
+      .insert({ company_id: company.id, name: ownerName || "Dono", role: "owner", active: true })
+      .select("id")
+      .single();
+
+    await admin
+      .from("services")
+      .insert({ company_id: company.id, name: "Serviço", duration_minutes: 30, active: true });
+
+    // optional: attach staff_id to profile if staff row exists
+    if (staff?.id) {
+      await admin.from("profiles").update({ staff_id: staff.id }).eq("id", userRes.user.id);
+    }
 
     return NextResponse.json({ ok: true });
   } catch (e: any) {

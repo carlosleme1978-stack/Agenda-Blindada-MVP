@@ -1,34 +1,35 @@
-import { NextResponse } from "next/server";
-import { createSupabaseServer } from "@/lib/supabase/server";
+import { NextResponse, type NextRequest } from "next/server";
+import { createSupabaseRouteClient } from "@/lib/supabase/route";
 
-export async function POST(req: Request) {
+export async function POST(request: NextRequest) {
+  const { supabase, response: cookieResponse } = createSupabaseRouteClient(request);
+
   try {
-    const body = (await req.json().catch(() => ({}))) as {
+    const { email, password } = (await request.json().catch(() => ({}))) as {
       email?: string;
       password?: string;
     };
 
-    const email = String(body.email ?? "").trim();
-    const password = String(body.password ?? "").trim();
-
     if (!email || !password) {
-      return NextResponse.json(
-        { error: "Email e password são obrigatórios" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Email e password são obrigatórios" }, { status: 400 });
     }
 
-    const supabase = await createSupabaseServer();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({
+      email: String(email).trim().toLowerCase(),
+      password: String(password),
+    });
+
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 401 });
     }
 
-    return NextResponse.json({ ok: true });
+    // Build JSON response and copy cookies set by Supabase SSR client
+    const res = NextResponse.json({ ok: true });
+    cookieResponse.cookies.getAll().forEach((c) => {
+      res.cookies.set(c.name, c.value, c);
+    });
+    return res;
   } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message ?? "Erro no login" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: e?.message ?? "Erro no login" }, { status: 500 });
   }
 }

@@ -1,125 +1,126 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
-function bearerToken(req: Request) {
-  const h = req.headers.get("authorization") || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m?.[1];
-}
-
 function toDigits(phone: string) {
   return String(phone || "").replace(/\D/g, "");
 }
 
 export async function POST(req: Request) {
   try {
-    const token = bearerToken(req);
-    if (!token) return new NextResponse("Missing bearer token", { status: 401 });
+    const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
+    if (!token) return new NextResponse("Missing token", { status: 401 });
 
     const admin = supabaseAdmin();
-    const { data: userRes, error: uErr } = await admin.auth.getUser(token);
-    if (uErr || !userRes.user) return new NextResponse("Invalid token", { status: 401 });
+    const { data: userRes, error: userErr } = await admin.auth.getUser(token);
+    if (userErr || !userRes.user) return new NextResponse("Invalid token", { status: 401 });
 
     const userId = userRes.user.id;
-
-    // Get profile + company + role + staff_id (if exists)
-    const { data: profile, error: pErr } = await admin
-      .from("profiles")
-      .select("company_id, role, staff_id")
-      .eq("id", userId)
-      .single();
-    if (pErr || !profile?.company_id) return new NextResponse("Profile without company_id", { status: 400 });
-
-    const companyId = profile.company_id as string;
-    const role = String(profile.role || "owner");
-    const staffIdFromProfile = (profile as any).staff_id as string | null | undefined;
 
     const body = (await req.json().catch(() => ({}))) as {
       customerPhone?: string;
       customerName?: string;
       startISO?: string;
       durationMinutes?: number;
-      staffId?: string;
       serviceId?: string;
+      staffId?: string;
     };
 
-    const customerPhoneRaw = String(body.customerPhone ?? "");
-    const customerPhone = toDigits(customerPhoneRaw);
-    const customerName = String(body.customerName ?? "").trim() || null;
-    const startISO = String(body.startISO ?? "");
-    const durationMinutes = Math.max(5, Number(body.durationMinutes ?? 30));
+    const customerPhone = toDigits(String(body.customerPhone ?? ""));
+    const customerName = String(body.customerName ?? "").trim();
+    const startISO = String(body.startISO ?? "").trim();
+    const durationMinutes = Number(body.durationMinutes ?? 30);
 
-    if (!customerPhone || !startISO) {
-      return new NextResponse("customerPhone e startISO são obrigatórios", { status: 400 });
+    if (!customerPhone || !startISO || !durationMinutes) {
+      return new NextResponse("Dados inválidos", { status: 400 });
     }
+
+    // company + role + staff_id
+    const { data: prof } = await admin
+      .from("profiles")
+      .select("company_id,role,staff_id")
+      .eq("id", userId)
+      .single();
+
+    const companyId = prof?.company_id as string | undefined;
+    if (!companyId) return new NextResponse("Sem company_id", { status: 400 });
+
+    const role = String(prof?.role ?? "owner");
+
+    // Determine staff_id
+    let staffId: string | null = null;
+
+    if (role === "staff") {
+      staffId = prof?.staff_id ?? null;
+      if (!staffId) return new NextResponse("Staff sem staff_id no profile", { status: 400 });
+    } else {
+      staffId = String(body.staffId ?? "").trim() || null;
+      if (!staffId) {
+        const { data: s } = await admin
+          .from("staff")
+          .select("id")
+          .eq("company_id", companyId)
+          .eq("active", true)
+          .order("created_at", { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        staffId = s?.id ?? null;
+      }
+    }
+
+    if (!staffId) return new NextResponse("Nenhum staff ativo encontrado", { status: 400 });
+
+    // Upsert customer
+    const { data: custUp, error: custErr } = await admin
+      .from("customers")
+      .upsert({ company_id: companyId, phone: customerPhone, name: customerName || null }, { onConflict: "company_id,phone" })
+      .select("id,phone,name")
+      .single();
+
+    if (custErr || !custUp) return new NextResponse(custErr?.message ?? "Erro cliente", { status: 400 });
 
     const start = new Date(startISO);
-    if (Number.isNaN(start.getTime())) {
-      return new NextResponse("startISO inválido", { status: 400 });
-    }
+    if (isNaN(start.getTime())) return new NextResponse("startISO inválido", { status: 400 });
     const end = new Date(start.getTime() + durationMinutes * 60000);
 
-    // Choose staff
-    let staffId: string | null = null;
-    if (role === "staff") {
-      staffId = staffIdFromProfile || null;
-      if (!staffId) return new NextResponse("Staff sem staff_id no profiles", { status: 400 });
-    } else {
-      staffId = body.staffId ? String(body.staffId) : null;
-    }
-
-    // Owner/manager fallback: if no staff selected, assign the first active staff.
-    if (!staffId) {
-      const { data: firstStaff } = await admin
-        .from("staff")
+    // Pick service
+    let serviceId: string | null = String(body.serviceId ?? "").trim() || null;
+    if (!serviceId) {
+      const { data: sv } = await admin
+        .from("services")
         .select("id")
         .eq("company_id", companyId)
         .eq("active", true)
         .order("created_at", { ascending: true })
         .limit(1)
         .maybeSingle();
-      staffId = (firstStaff as any)?.id ?? null;
+      serviceId = sv?.id ?? null;
     }
 
-    if (!staffId) {
-      return new NextResponse("Sem staff disponível. Crie pelo menos 1 staff ativo.", { status: 400 });
-    }
-
-    const serviceId = body.serviceId ? String(body.serviceId) : null;
-
-    // Upsert customer (unique: company_id+phone)
-    const { data: cust, error: cErr } = await admin
-      .from("customers")
-      .upsert(
-        { company_id: companyId, phone: customerPhone, name: customerName },
-        { onConflict: "company_id,phone" }
-      )
-      .select("id")
-      .single();
-
-    if (cErr || !cust?.id) {
-      return new NextResponse(cErr?.message ?? "Falha ao criar cliente", { status: 400 });
-    }
-
-    const { data: appt, error: aErr } = await admin
+    const { data: appt, error: apptErr } = await admin
       .from("appointments")
       .insert({
         company_id: companyId,
-        customer_id: cust.id,
+        customer_id: custUp.id,
         start_time: start.toISOString(),
         end_time: end.toISOString(),
         status: "BOOKED",
         staff_id: staffId,
         service_id: serviceId,
-        customer_name_snapshot: customerName,
+        customer_name_snapshot: customerName || null,
       })
       .select("id")
       .single();
 
-    if (aErr) {
-      // overlap constraint returns 23505/23P01 depending; expose readable
-      const msg = aErr.message || "Erro ao criar marcação";
-      return new NextResponse(msg, { status: 400 });
+    if (apptErr || !appt) {
+      return new NextResponse(apptErr?.message ?? "Erro ao criar marcação", { status: 400 });
+    }
+
+    // Fire-and-forget WhatsApp message (best effort)
+    try {
+      const { sendWhatsAppTextForCompany } = await import("@/lib/whatsapp/company");
+      await sendWhatsAppTextForCompany({ companyId, to: customerPhone, body: `Olá${customerName ? ` ${customerName}` : ""}! Sua marcação foi criada. Para confirmar responda: SIM. Para cancelar: NÃO.` });
+    } catch {
+      // ignore
     }
 
     return NextResponse.json({ ok: true, id: appt.id });

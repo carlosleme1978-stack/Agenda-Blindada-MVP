@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 export default function SignupPage() {
   const r = useRouter();
+
+  const [accessCode, setAccessCode] = useState(""); // ✅ novo
   const [companyName, setCompanyName] = useState("");
   const [ownerName, setOwnerName] = useState("");
   const [email, setEmail] = useState("");
@@ -13,21 +15,44 @@ export default function SignupPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // ✅ exige ter código antes de entrar no signup
+  useEffect(() => {
+    const code = localStorage.getItem("access_code") || "";
+    if (!code.trim()) {
+      r.replace("/acesso");
+      return;
+    }
+    setAccessCode(code.trim());
+  }, [r]);
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setMsg(null);
+
+    const code = accessCode.trim();
+    if (!code) {
+      setMsg("Sem código de acesso. Volte para /acesso.");
+      r.push("/acesso");
+      return;
+    }
+
     setLoading(true);
     try {
       const res = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ companyName, ownerName, email, password }),
+        // ✅ envia accessCode agora
+        body: JSON.stringify({ accessCode: code, companyName, ownerName, email, password }),
       });
+
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         setMsg(json?.error || "Falha ao criar conta");
         return;
       }
+
+      // ✅ remove o código (já foi usado)
+      localStorage.removeItem("access_code");
 
       // Auto login
       const login = await fetch("/api/auth/login", {
@@ -90,20 +115,29 @@ export default function SignupPage() {
         <h1 style={{ margin: "12px 0 6px", fontSize: 26, letterSpacing: -0.6 }}>
           Ativar o painel
         </h1>
+
         <p style={{ margin: 0, opacity: 0.75, fontSize: 13, lineHeight: 1.5 }}>
-          Use isto como botão “Criar conta” após a compra. Cria a empresa + utilizador owner.
+          Cadastro protegido por código. Seu código atual: <b>{accessCode || "—"}</b>
         </p>
 
         <div style={{ height: 14 }} />
 
         <form onSubmit={onSubmit}>
           <label style={{ fontSize: 13, fontWeight: 800 }}>Nome da empresa</label>
-          <input style={{ ...inputStyle, marginTop: 6 }} value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
+          <input
+            style={{ ...inputStyle, marginTop: 6 }}
+            value={companyName}
+            onChange={(e) => setCompanyName(e.target.value)}
+          />
 
           <div style={{ height: 12 }} />
 
           <label style={{ fontSize: 13, fontWeight: 800 }}>Seu nome (opcional)</label>
-          <input style={{ ...inputStyle, marginTop: 6 }} value={ownerName} onChange={(e) => setOwnerName(e.target.value)} />
+          <input
+            style={{ ...inputStyle, marginTop: 6 }}
+            value={ownerName}
+            onChange={(e) => setOwnerName(e.target.value)}
+          />
 
           <div style={{ height: 12 }} />
 
@@ -147,6 +181,12 @@ export default function SignupPage() {
           >
             {loading ? "A criar..." : "Criar conta"}
           </button>
+
+          <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between" }}>
+            <Link href="/acesso" style={{ fontSize: 13, opacity: 0.8 }}>
+              Trocar código
+            </Link>
+          </div>
 
           {msg && (
             <p
