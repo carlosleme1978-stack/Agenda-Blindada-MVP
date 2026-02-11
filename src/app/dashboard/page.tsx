@@ -1,39 +1,26 @@
-// export const dynamic = "force-dynamic";
-// export const revalidate = false;
+"use client";
 
-// import DashboardClient from "./DashboardClient";
-// import DashboardLiteClient from "./DashboardLiteClient";
+export const dynamic = "force-dynamic";
+export const revalidate = false;
 
-// export default function Page() {
-//   return (
-//     <>
-//       {/* Desktop / Tablet */}
-//       <div className="hidden md:block">
-//         <DashboardClient />
-//       </div>
+import { useEffect, useState } from "react";
+import DashboardClient from "./DashboardClient";
+import DashboardLiteClient from "./DashboardLiteClient";
 
-//       {/* Mobile */}
-//       <div className="block md:hidden">
-//         <DashboardLiteClient />
-//       </div>
-//     </>
-//   );
-// }
-import DashboardClient from "@/components/dashboard/DashboardClient";
-import DashboardLiteClient from "@/components/dashboard/DashboardLiteClient";
+const MD_BREAKPOINT = 768; // px (equivalente ao md)
 
-export default function DashboardPage() {
-  return (
-    <>
-      {/* Desktop/Tablet */}
-      <div className="hidden md:block">
-        <DashboardClient />
-      </div>
+export default function Page() {
+  const [isMobile, setIsMobile] = useState<boolean | null>(null);
 
-      {/* Mobile */}
-      <div className="block md:hidden">
-        <DashboardLiteClient />
-      </div>
-    </>
-  );
+  useEffect(() => {
+    const compute = () => setIsMobile(window.innerWidth < MD_BREAKPOINT);
+    compute();
+    window.addEventListener("resize", compute);
+    return () => window.removeEventListener("resize", compute);
+  }, []);
+
+  // Evita mismatch de hidratação / “piscar”
+  if (isMobile === null) return null;
+
+  return isMobile ? <DashboardLiteClient /> : <DashboardClient />;
 }
