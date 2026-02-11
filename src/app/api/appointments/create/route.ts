@@ -1,213 +1,129 @@
-import { NextResponse, type NextRequest } from "next/server";
-import { getAuthContext } from "@/server/auth";
-import { sendWhatsApp } from "@/lib/whatsapp/send";
+import { NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
-type Body = {
-  customerPhone?: string;
-  customerName?: string;
-  startISO?: string; // vindo do input datetime-local (ex: "2026-02-10T14:30")
-  durationMinutes?: number;
-  serviceId?: string | null;
-  staffId?: string | null;
-};
-
-function normalizePhone(p: string): string {
-  const s = String(p || "").trim();
-  if (!s) return s;
-  if (s.startsWith("+")) return "+" + s.slice(1).replace(/\D/g, "");
-  return s.replace(/\D/g, "");
+function bearerToken(req: Request) {
+  const h = req.headers.get("authorization") || "";
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  return m?.[1];
 }
 
-// datetime-local NÃO tem timezone. Precisamos interpretar como horário local e converter para ISO (UTC).
-function parseLocalDateTimeToUTCISOString(dt: string): { startISO: string; start: Date } | null {
-  // aceita "YYYY-MM-DDTHH:mm" (ou com segundos)
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(dt);
-  if (!m) return null;
-
-  const year = Number(m[1]);
-  const month = Number(m[2]) - 1;
-  const day = Number(m[3]);
-  const hour = Number(m[4]);
-  const minute = Number(m[5]);
-  const second = m[6] ? Number(m[6]) : 0;
-
-  const d = new Date(year, month, day, hour, minute, second); // local time
-  if (isNaN(d.getTime())) return null;
-
-  return { startISO: d.toISOString(), start: d };
+function toDigits(phone: string) {
+  return String(phone || "").replace(/\D/g, "");
 }
 
-function addMinutes(d: Date, mins: number): Date {
-  return new Date(d.getTime() + mins * 60 * 1000);
-}
-
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    // ✅ SSR cookies auth (companyId vem do server/auth)
-    const { supabase, companyId } = await getAuthContext();
+    const token = bearerToken(req);
+    if (!token) return new NextResponse("Missing bearer token", { status: 401 });
 
-    const body = (await req.json().catch(() => ({}))) as Body;
+    const admin = supabaseAdmin();
+    const { data: userRes, error: uErr } = await admin.auth.getUser(token);
+    if (uErr || !userRes.user) return new NextResponse("Invalid token", { status: 401 });
 
-    const customerPhone = normalizePhone(body.customerPhone || "");
-    const customerName = (body.customerName || "").trim() || null;
-    const startISOInput = String(body.startISO || "").trim();
+    const userId = userRes.user.id;
 
-    // ✅ staff obrigatório (agenda por staff)
-    const staffId = (body.staffId || "").trim();
-    if (!staffId) {
-      return NextResponse.json({ error: "Staff é obrigatório" }, { status: 400 });
-    }
-
-    if (!customerPhone) {
-      return NextResponse.json({ error: "Telefone inválido" }, { status: 400 });
-    }
-    if (!startISOInput) {
-      return NextResponse.json({ error: "Data/hora inválida" }, { status: 400 });
-    }
-
-    // duration: se vier vazio, tenta pegar do service; senão usa 30
-    let durationMinutes = Number(body.durationMinutes ?? NaN);
-
-    // ✅ valida e resolve service_id (e garante que o service pertence à empresa)
-    const serviceId = body.serviceId ? String(body.serviceId) : null;
-    if (serviceId) {
-      const { data: svc, error: svcErr } = await supabase
-        .from("services")
-        .select("id,duration_minutes")
-        .eq("company_id", companyId)
-        .eq("id", serviceId)
-        .single();
-
-      if (svcErr) {
-        return NextResponse.json({ error: "Serviço inválido" }, { status: 400 });
-      }
-      if (!Number.isFinite(durationMinutes)) {
-        durationMinutes = Number(svc?.duration_minutes ?? 30);
-      }
-    }
-
-    if (!Number.isFinite(durationMinutes)) durationMinutes = 30;
-    if (!Number.isFinite(durationMinutes) || durationMinutes < 5 || durationMinutes > 8 * 60) {
-      return NextResponse.json({ error: "Duração inválida" }, { status: 400 });
-    }
-
-    const parsed = parseLocalDateTimeToUTCISOString(startISOInput);
-    if (!parsed) {
-      return NextResponse.json({ error: "Data/hora inválida" }, { status: 400 });
-    }
-
-    const startUTCISO = parsed.startISO;
-    const startLocal = parsed.start;
-    const endLocal = addMinutes(startLocal, durationMinutes);
-    const endUTCISO = endLocal.toISOString();
-
-    // ✅ garante que o staff pertence à empresa
-    const { data: staff, error: staffErr } = await supabase
-      .from("staff")
-      .select("id, active")
-      .eq("company_id", companyId)
-      .eq("id", staffId)
+    // Get profile + company + role + staff_id (if exists)
+    const { data: profile, error: pErr } = await admin
+      .from("profiles")
+      .select("company_id, role, staff_id")
+      .eq("id", userId)
       .single();
+    if (pErr || !profile?.company_id) return new NextResponse("Profile without company_id", { status: 400 });
 
-    if (staffErr || !staff?.id) {
-      return NextResponse.json({ error: "Staff inválido" }, { status: 400 });
-    }
-    if (staff.active === false) {
-      return NextResponse.json({ error: "Staff inativo" }, { status: 400 });
-    }
+    const companyId = profile.company_id as string;
+    const role = String(profile.role || "owner");
+    const staffIdFromProfile = (profile as any).staff_id as string | null | undefined;
 
-    // ✅ anti-conflito por staff (não deixa sobrepor)
-    // overlap: start < existing_end AND end > existing_start
-    const { data: conflicts, error: confErr } = await supabase
-      .from("appointments")
-      .select("id")
-      .eq("company_id", companyId)
-      .eq("staff_id", staffId)
-      .neq("status", "CANCELLED")
-      .lt("start_time", endUTCISO)
-      .gt("end_time", startUTCISO)
-      .limit(1);
+    const body = (await req.json().catch(() => ({}))) as {
+      customerPhone?: string;
+      customerName?: string;
+      startISO?: string;
+      durationMinutes?: number;
+      staffId?: string;
+      serviceId?: string;
+    };
 
-    if (confErr) {
-      return NextResponse.json({ error: confErr.message }, { status: 500 });
-    }
-    if (conflicts && conflicts.length > 0) {
-      return NextResponse.json(
-        { error: "Horário indisponível para este staff" },
-        { status: 409 }
-      );
+    const customerPhoneRaw = String(body.customerPhone ?? "");
+    const customerPhone = toDigits(customerPhoneRaw);
+    const customerName = String(body.customerName ?? "").trim() || null;
+    const startISO = String(body.startISO ?? "");
+    const durationMinutes = Math.max(5, Number(body.durationMinutes ?? 30));
+
+    if (!customerPhone || !startISO) {
+      return new NextResponse("customerPhone e startISO são obrigatórios", { status: 400 });
     }
 
-    // 1) upsert customer (unique by company_id + phone)
-    const { data: customer, error: custErr } = await supabase
+    const start = new Date(startISO);
+    if (Number.isNaN(start.getTime())) {
+      return new NextResponse("startISO inválido", { status: 400 });
+    }
+    const end = new Date(start.getTime() + durationMinutes * 60000);
+
+    // Choose staff
+    let staffId: string | null = null;
+    if (role === "staff") {
+      staffId = staffIdFromProfile || null;
+      if (!staffId) return new NextResponse("Staff sem staff_id no profiles", { status: 400 });
+    } else {
+      staffId = body.staffId ? String(body.staffId) : null;
+    }
+
+    // Owner/manager fallback: if no staff selected, assign the first active staff.
+    if (!staffId) {
+      const { data: firstStaff } = await admin
+        .from("staff")
+        .select("id")
+        .eq("company_id", companyId)
+        .eq("active", true)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      staffId = (firstStaff as any)?.id ?? null;
+    }
+
+    if (!staffId) {
+      return new NextResponse("Sem staff disponível. Crie pelo menos 1 staff ativo.", { status: 400 });
+    }
+
+    const serviceId = body.serviceId ? String(body.serviceId) : null;
+
+    // Upsert customer (unique: company_id+phone)
+    const { data: cust, error: cErr } = await admin
       .from("customers")
       .upsert(
-        {
-          company_id: companyId,
-          phone: customerPhone,
-          name: customerName,
-          consent_whatsapp: true,
-        },
+        { company_id: companyId, phone: customerPhone, name: customerName },
         { onConflict: "company_id,phone" }
       )
-      .select("id,phone,name")
+      .select("id")
       .single();
 
-    if (custErr || !customer) {
-      return NextResponse.json(
-        { error: custErr?.message || "Falha ao criar cliente" },
-        { status: 500 }
-      );
+    if (cErr || !cust?.id) {
+      return new NextResponse(cErr?.message ?? "Falha ao criar cliente", { status: 400 });
     }
 
-    // 2) create appointment
-    const { data: appt, error: apptErr } = await supabase
+    const { data: appt, error: aErr } = await admin
       .from("appointments")
       .insert({
         company_id: companyId,
-        customer_id: customer.id,
-        start_time: startUTCISO,
-        end_time: endUTCISO,
-        status: "BOOKED", // ✅ sem PENDING
-        customer_name_snapshot: customerName,
-        service_id: serviceId,
+        customer_id: cust.id,
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
+        status: "BOOKED",
         staff_id: staffId,
+        service_id: serviceId,
+        customer_name_snapshot: customerName,
       })
-      .select("id,start_time,end_time,status,staff_id,service_id")
+      .select("id")
       .single();
 
-    if (apptErr || !appt) {
-      return NextResponse.json(
-        { error: apptErr?.message || "Falha ao criar marcação" },
-        { status: 500 }
-      );
+    if (aErr) {
+      // overlap constraint returns 23505/23P01 depending; expose readable
+      const msg = aErr.message || "Erro ao criar marcação";
+      return new NextResponse(msg, { status: 400 });
     }
 
-    // 3) WhatsApp (best-effort)
-    try {
-      const when = startLocal.toLocaleString("pt-PT", {
-        dateStyle: "short",
-        timeStyle: "short",
-      });
-      const hello = customerName ? `Olá, ${customerName}!` : "Olá!";
-      const msg =
-        `${hello}\n\n` +
-        `A sua marcação está registada para ${when}.\n` +
-        `Responda SIM para confirmar ou NAO para cancelar.`;
-
-      await sendWhatsApp(customerPhone, msg);
-    } catch (e) {
-      console.error("WHATSAPP send failed (non-blocking):", e);
-    }
-
-    return NextResponse.json({ appointment: appt }, { status: 201 });
-  } catch (err: any) {
-    console.error("APPOINTMENTS/CREATE ERROR:", err);
-    const msg = err?.message || "Erro interno";
-
-    if (msg.toLowerCase().includes("não autorizado") || msg.toLowerCase().includes("sessão")) {
-      return NextResponse.json({ error: msg }, { status: 401 });
-    }
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ ok: true, id: appt.id });
+  } catch (e: any) {
+    return new NextResponse(e?.message ?? "Erro", { status: 500 });
   }
 }

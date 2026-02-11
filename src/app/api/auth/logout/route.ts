@@ -1,26 +1,12 @@
-import { NextResponse, type NextRequest } from "next/server";
-import { createServerClient } from "@supabase/ssr";
+import { NextResponse } from "next/server";
+import { createSupabaseServer } from "@/lib/supabase/server";
 
-export async function POST(request: NextRequest) {
-  const response = NextResponse.json({ ok: true });
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            response.cookies.set(name, value, options);
-          });
-        },
-      },
-    }
-  );
-
-  await supabase.auth.signOut();
-  return response;
+export async function POST() {
+  try {
+    const supabase = createSupabaseServer();
+    await supabase.auth.signOut();
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "Erro ao sair" }, { status: 500 });
+  }
 }

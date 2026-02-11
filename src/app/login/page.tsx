@@ -200,7 +200,12 @@ export default function Login() {
               )}
             </form>
 
-            <div style={{ marginTop: 14, fontSize: 12, opacity: 0.65, lineHeight: 1.5 }}>
+            
+            <div style={{ marginTop: 14, fontSize: 13, opacity: 0.8 }}>
+              Ainda não tem conta? <a href="/signup" style={{ fontWeight: 900 }}>Criar conta</a>
+            </div>
+
+<div style={{ marginTop: 14, fontSize: 12, opacity: 0.65, lineHeight: 1.5 }}>
               Ao acessar, você concorda com as políticas internas de uso do sistema.
             </div>
           </div>
