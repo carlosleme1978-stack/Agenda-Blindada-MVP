@@ -35,22 +35,24 @@ export async function POST(req: Request) {
     }
 
     // company + role + staff_id
-    const { data: prof } = await admin
+    const { data: prof, error: profErr } = await admin
       .from("profiles")
       .select("company_id,role,staff_id")
       .eq("id", userId)
       .single();
 
-    const companyId = prof?.company_id as string | undefined;
+    if (profErr || !prof) return new NextResponse("Profile não encontrado", { status: 400 });
+
+    const companyId = prof.company_id as string | undefined;
     if (!companyId) return new NextResponse("Sem company_id", { status: 400 });
 
-    const role = String(prof?.role ?? "owner");
+    const role = String(prof.role ?? "owner");
 
     // Determine staff_id
     let staffId: string | null = null;
 
     if (role === "staff") {
-      staffId = prof?.staff_id ?? null;
+      staffId = prof.staff_id ?? null;
       if (!staffId) return new NextResponse("Staff sem staff_id no profile", { status: 400 });
     } else {
       staffId = String(body.staffId ?? "").trim() || null;
@@ -69,10 +71,30 @@ export async function POST(req: Request) {
 
     if (!staffId) return new NextResponse("Nenhum staff ativo encontrado", { status: 400 });
 
+    // ✅ VALIDAR staffId pertence à company e está ativo
+    const { data: staffRow, error: staffErr } = await admin
+      .from("staff")
+      .select("id,company_id,active")
+      .eq("id", staffId)
+      .maybeSingle();
+
+    if (staffErr || !staffRow) {
+      return new NextResponse("Staff inválido", { status: 400 });
+    }
+    if (String(staffRow.company_id) !== String(companyId)) {
+      return new NextResponse("staff_invalid_for_company", { status: 400 });
+    }
+    if (staffRow.active !== true) {
+      return new NextResponse("Staff inativo", { status: 400 });
+    }
+
     // Upsert customer
     const { data: custUp, error: custErr } = await admin
       .from("customers")
-      .upsert({ company_id: companyId, phone: customerPhone, name: customerName || null }, { onConflict: "company_id,phone" })
+      .upsert(
+        { company_id: companyId, phone: customerPhone, name: customerName || null },
+        { onConflict: "company_id,phone" }
+      )
       .select("id,phone,name")
       .single();
 
@@ -96,6 +118,31 @@ export async function POST(req: Request) {
       serviceId = sv?.id ?? null;
     }
 
+    if (!serviceId) {
+      return new NextResponse("Nenhum serviço ativo encontrado", { status: 400 });
+    }
+
+    // ✅ VALIDAR serviceId pertence à company e está ativo
+    const { data: serviceRow, error: serviceErr } = await admin
+      .from("services")
+      .select("id,company_id,active,name,duration_minutes")
+      .eq("id", serviceId)
+      .maybeSingle();
+
+    if (serviceErr || !serviceRow) {
+      return new NextResponse("Serviço inválido", { status: 400 });
+    }
+    if (String(serviceRow.company_id) !== String(companyId)) {
+      return new NextResponse("service_invalid_for_company", { status: 400 });
+    }
+    if (serviceRow.active !== true) {
+      return new NextResponse("Serviço inativo", { status: 400 });
+    }
+
+    // (Opcional) se quiser forçar duração = duração do serviço:
+    // const finalDuration = Number(serviceRow.duration_minutes ?? durationMinutes);
+    // const end = new Date(start.getTime() + finalDuration * 60000);
+
     const { data: appt, error: apptErr } = await admin
       .from("appointments")
       .insert({
@@ -107,6 +154,8 @@ export async function POST(req: Request) {
         staff_id: staffId,
         service_id: serviceId,
         customer_name_snapshot: customerName || null,
+        service_name_snapshot: serviceRow.name ?? null,
+        service_duration_minutes_snapshot: serviceRow.duration_minutes ?? null,
       })
       .select("id")
       .single();
@@ -118,7 +167,11 @@ export async function POST(req: Request) {
     // Fire-and-forget WhatsApp message (best effort)
     try {
       const { sendWhatsAppTextForCompany } = await import("@/lib/whatsapp/company");
-      await sendWhatsAppTextForCompany({ companyId, to: customerPhone, body: `Olá${customerName ? ` ${customerName}` : ""}! Sua marcação foi criada. Para confirmar responda: SIM. Para cancelar: NÃO.` });
+      await sendWhatsAppTextForCompany(
+        companyId,
+        customerPhone,
+        `Olá${customerName ? ` ${customerName}` : ""}! Sua marcação foi criada. Para confirmar responda: SIM. Para cancelar: NÃO.`
+      );
     } catch {
       // ignore
     }
