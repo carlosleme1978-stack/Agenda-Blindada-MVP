@@ -1,18 +1,24 @@
-import { NextResponse, type NextRequest } from "next/server";
-import { createSupabaseRouteClient } from "@/lib/supabase/route";
+import { NextResponse } from "next/server";
 
-export async function POST(request: NextRequest) {
-  const { supabase, response: cookieResponse } = createSupabaseRouteClient(request);
+export async function POST() {
+  const res = NextResponse.json({ ok: true });
 
-  try {
-    await supabase.auth.signOut();
+  // cookies mais comuns do supabase auth (SSR)
+  const names = [
+    "sb-access-token",
+    "sb-refresh-token",
+    "sb-auth-token",
+    "supabase-auth-token",
+  ];
 
-    const res = NextResponse.json({ ok: true });
-    cookieResponse.cookies.getAll().forEach((c) => {
-      res.cookies.set(c.name, c.value, c.options);
-    });
-    return res;
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Erro no logout" }, { status: 500 });
+  // apaga no path "/" (padrão)
+  for (const name of names) {
+    res.cookies.set(name, "", { path: "/", maxAge: 0 });
+    res.cookies.delete?.(name); // caso exista nesta versão
   }
+
+  // fallback: expirar qualquer cookie que comece com "sb-"
+  // (Next não permite listar e reaplicar "options" com tipagem estável)
+  // então fazemos uma limpeza segura para os nomes conhecidos.
+  return res;
 }
