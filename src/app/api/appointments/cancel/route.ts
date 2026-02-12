@@ -32,16 +32,20 @@ export async function POST(req: Request) {
     // get customer phone
     const { data: cust } = await admin.from("customers").select("phone,name").eq("id", appt.customer_id).single();
 
-    // send whatsapp best effort
-    try {
-      const { sendWhatsAppTextForCompany } = await import("@/lib/whatsapp/company");
-      const name = cust?.name ? ` ${cust.name}` : "";
-      if (cust?.phone) {
-        await sendWhatsAppTextForCompany({ companyId, to: cust.phone, body: `Olá${name}! Sua marcação foi cancelada. Se quiser reagendar, responda aqui com a data/horário desejado.` });
-      }
-    } catch {
-      // ignore
-    }
+// send whatsapp best effort
+try {
+  const { sendWhatsAppTextForCompany } = await import("@/lib/whatsapp/company");
+  const name = cust?.name ? ` ${cust.name}` : "";
+  if (cust?.phone) {
+    await sendWhatsAppTextForCompany(
+      companyId,
+      cust.phone,
+      `Olá${name}! Sua marcação foi cancelada. Se quiser reagendar, responda aqui com a data/horário desejado.`
+    );
+  }
+} catch {
+  // ignore
+}
 
     return NextResponse.json({ ok: true });
   } catch (e: any) {
