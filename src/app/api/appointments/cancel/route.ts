@@ -37,8 +37,11 @@ export async function POST(req: Request) {
       const { sendWhatsAppTextForCompany } = await import("@/lib/whatsapp/company");
       const name = cust?.name ? ` ${cust.name}` : "";
       if (cust?.phone) {
-        await sendWhatsAppTextForCompany({ companyId, to: cust.phone, body: `Olá${name}! Sua marcação foi cancelada. Se quiser reagendar, responda aqui com a data/horário desejado.` });
-      }
+       await sendWhatsAppTextForCompany(
+  companyId,
+  cust.phone,
+  `Olá${name}! Sua marcação foi cancelada. Se quiser reagendar, responda aqui com a data/horário desejado.`
+);
     } catch {
       // ignore
     }
