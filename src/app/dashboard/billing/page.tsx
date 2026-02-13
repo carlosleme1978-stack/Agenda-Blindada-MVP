@@ -111,6 +111,19 @@ export default function BillingPage() {
     }
   }
 
+  async function openPortal() {
+    setMsg(null);
+    try {
+      const res = await fetch(`/api/stripe/portal`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'Falha ao abrir portal');
+      if (!data?.url) throw new Error('Portal URL não retornou');
+      window.location.href = data.url;
+    } catch (e: any) {
+      setMsg(e?.message ?? 'Erro ao abrir portal');
+    }
+  }
+
 
   const topBar = (
     <div className="billTop" style={{ maxWidth: 820, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -197,6 +210,22 @@ export default function BillingPage() {
                   </div>
                 ) : (
                   <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                    <button
+                      onClick={() => openPortal()}
+                      style={{
+                        width: "100%",
+                        padding: "11px 14px",
+                        borderRadius: 14,
+                        border: "1px solid rgba(255,255,255,0.14)",
+                        background: "rgba(255,255,255,0.06)",
+                        color: "rgba(229,231,235,0.9)",
+                        fontWeight: 850,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Gerenciar assinatura (Portal)
+                    </button>
+
                     <button
                       onClick={() => checkout("pro")}
                       disabled={company.plan === "pro" || paying === "pro"}

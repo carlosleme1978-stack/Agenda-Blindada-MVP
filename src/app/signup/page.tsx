@@ -1,11 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export default function SignupPage() {
   const r = useRouter();
+  const sp = useSearchParams();
+
+  const sessionId = useMemo(() => {
+    return (sp.get('session_id') || '').trim();
+  }, [sp]);
 
   const [accessCode, setAccessCode] = useState(""); // ✅ novo
   const [companyName, setCompanyName] = useState("");
@@ -15,24 +20,30 @@ export default function SignupPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // ✅ exige ter código antes de entrar no signup
+  // ✅ fluxo 1: Stripe (pagar primeiro) => libera signup com session_id
+  // ✅ fluxo 2: código de acesso (legado) => libera signup com access_code
   useEffect(() => {
+    if (sessionId) {
+      setAccessCode('');
+      return;
+    }
+
     const code = localStorage.getItem("access_code") || "";
     if (!code.trim()) {
-      r.replace("/acesso");
+      r.replace("/planos");
       return;
     }
     setAccessCode(code.trim());
-  }, [r]);
+  }, [r, sessionId]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setMsg(null);
 
     const code = accessCode.trim();
-    if (!code) {
-      setMsg("Sem código de acesso. Volte para /acesso.");
-      r.push("/acesso");
+    if (!sessionId && !code) {
+      setMsg("Sem pagamento (session_id) e sem código de acesso. Volte para /planos.");
+      r.push("/planos");
       return;
     }
 
@@ -41,8 +52,7 @@ export default function SignupPage() {
       const res = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // ✅ envia accessCode agora
-        body: JSON.stringify({ accessCode: code, companyName, ownerName, email, password }),
+        body: JSON.stringify({ sessionId, accessCode: code, companyName, ownerName, email, password }),
       });
 
       const json = await res.json().catch(() => ({}));
@@ -51,7 +61,7 @@ export default function SignupPage() {
         return;
       }
 
-      // ✅ remove o código (já foi usado)
+      // ✅ remove o código (se usado)
       localStorage.removeItem("access_code");
 
       // Auto login
@@ -117,7 +127,11 @@ export default function SignupPage() {
         </h1>
 
         <p style={{ margin: 0, opacity: 0.75, fontSize: 13, lineHeight: 1.5 }}>
-          Cadastro protegido por código. Seu código atual: <b>{accessCode || "—"}</b>
+          {sessionId ? (
+            <>Pagamento detectado. Agora finalize sua conta.</>
+          ) : (
+            <>Cadastro protegido por código. Seu código atual: <b>{accessCode || "—"}</b></>
+          )}
         </p>
 
         <div style={{ height: 14 }} />

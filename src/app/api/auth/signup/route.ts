@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { getStripe } from "@/lib/stripe/server";
 
 function cleanEmail(e: string) {
   return String(e || "").trim().toLowerCase();
@@ -13,16 +14,21 @@ export async function POST(req: Request) {
       password?: string;
       ownerName?: string;
       accessCode?: string;
+      sessionId?: string;
     };
 
+    const sessionId = String(body.sessionId ?? "").trim();
     const accessCode = String(body.accessCode ?? "").trim();
     const companyNameInput = String(body.companyName ?? "").trim();
     const ownerName = String(body.ownerName ?? "").trim();
     const email = cleanEmail(String(body.email ?? ""));
     const password = String(body.password ?? "");
 
-    if (!accessCode) {
-      return NextResponse.json({ error: "Cadastro somente com código de acesso (accessCode)." }, { status: 403 });
+    // Two ways to signup:
+    // 1) Pay-first: valid Stripe checkout session (sessionId)
+    // 2) Legacy: access code (accessCode)
+    if (!sessionId && !accessCode) {
+      return NextResponse.json({ error: "Cadastro somente após pagamento (sessionId) ou com código de acesso (accessCode)." }, { status: 403 });
     }
 
     if (!email || !password) {
@@ -30,6 +36,105 @@ export async function POST(req: Request) {
     }
 
     const admin = supabaseAdmin();
+
+    // ------------------------------
+    // FLOW A) Stripe pay-first
+    // ------------------------------
+    if (sessionId) {
+      const stripe = getStripe();
+      const session = await stripe.checkout.sessions.retrieve(sessionId, {
+        expand: ["customer", "subscription"],
+      });
+
+      const paymentStatus = String((session as any).payment_status ?? "").toLowerCase();
+      if (paymentStatus !== "paid") {
+        return NextResponse.json({ error: "Pagamento não confirmado (session ainda não está paid)." }, { status: 403 });
+      }
+
+      const customerId = typeof session.customer === "string" ? session.customer : session.customer?.id;
+      const subscriptionId = typeof session.subscription === "string" ? session.subscription : session.subscription?.id;
+
+      if (!customerId || !subscriptionId) {
+        return NextResponse.json({ error: "Stripe session inválida (sem customer/subscription)." }, { status: 400 });
+      }
+
+      const meta = (session.metadata ?? {}) as Record<string, string>;
+      const plan = (meta.plan || "basic").toLowerCase() === "pro" ? "pro" : "basic";
+      const stripeEmail = String(meta.email || session.customer_details?.email || "").trim().toLowerCase();
+
+      if (stripeEmail && stripeEmail !== email) {
+        return NextResponse.json({ error: "O email informado não bate com o email do pagamento." }, { status: 400 });
+      }
+
+      const finalCompanyName = companyNameInput || String(meta.company_name || "").trim();
+      if (!finalCompanyName) {
+        return NextResponse.json({ error: "companyName é obrigatório (ou envie no pagamento)." }, { status: 400 });
+      }
+
+      // Create company (limit 5)
+      const { data: company, error: cErr } = await admin
+        .from("companies")
+        .insert({
+          name: finalCompanyName,
+          plan,
+          staff_limit: 5,
+          stripe_customer_id: customerId,
+          stripe_subscription_id: subscriptionId,
+          stripe_subscription_status: "active",
+          sub_basic_status: plan === "basic" ? "active" : "inactive",
+          sub_pro_status: plan === "pro" ? "active" : "inactive",
+        })
+        .select("id")
+        .single();
+
+      if (cErr || !company?.id) {
+        return NextResponse.json({ error: cErr?.message ?? "Falha ao criar empresa" }, { status: 400 });
+      }
+
+      // Create auth user
+      const { data: userRes, error: uErr } = await admin.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          company_name: finalCompanyName,
+          owner_name: ownerName,
+        },
+      });
+
+      if (uErr || !userRes.user) {
+        await admin.from("companies").delete().eq("id", company.id);
+        return NextResponse.json({ error: uErr?.message ?? "Falha ao criar user" }, { status: 400 });
+      }
+
+      // Create profile
+      const { error: pErr } = await admin
+        .from("profiles")
+        .insert({ id: userRes.user.id, company_id: company.id, role: "owner" });
+
+      if (pErr) {
+        await admin.auth.admin.deleteUser(userRes.user.id);
+        await admin.from("companies").delete().eq("id", company.id);
+        return NextResponse.json({ error: pErr.message }, { status: 400 });
+      }
+
+      // Defaults
+      const { data: staff } = await admin
+        .from("staff")
+        .insert({ company_id: company.id, name: ownerName || "Dono", role: "owner", active: true })
+        .select("id")
+        .single();
+
+      await admin
+        .from("services")
+        .insert({ company_id: company.id, name: "Serviço", duration_minutes: 30, active: true });
+
+      if (staff?.id) {
+        await admin.from("profiles").update({ staff_id: staff.id }).eq("id", userRes.user.id);
+      }
+
+      return NextResponse.json({ ok: true });
+    }
 
     // 0) Validate code
     const { data: codeRow, error: codeErr } = await admin
