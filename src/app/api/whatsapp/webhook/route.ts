@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
   const i = intent(text);
 
   if (!appt?.id) {
-    await sendWhatsAppTextForCompany({ companyId, to: from, body: `Olá! Não encontrei nenhuma marcação no momento. Se deseja marcar, diga um dia e horário.` });
+    await sendWhatsAppTextForCompany( companyId, from,`Olá! Não encontrei nenhuma marcação no momento. Se deseja marcar, diga um dia e horário.` );
     return NextResponse.json({ ok: true });
   }
 
@@ -111,14 +111,14 @@ export async function POST(req: NextRequest) {
     if (String(appt.status).toUpperCase() !== "CONFIRMED") {
       await admin.from("appointments").update({ status: "CONFIRMED" }).eq("id", appt.id).eq("company_id", companyId);
     }
-    await sendWhatsAppTextForCompany({ companyId, to: from, body: `Perfeito ✅ Sua marcação está CONFIRMADA.` });
+    await sendWhatsAppTextForCompany( companyId, from, `Perfeito ✅ Sua marcação está CONFIRMADA.` );
   } else if (i === "CANCEL") {
     if (String(appt.status).toUpperCase() !== "CANCELLED") {
       await admin.from("appointments").update({ status: "CANCELLED" }).eq("id", appt.id).eq("company_id", companyId);
     }
-    await sendWhatsAppTextForCompany({ companyId, to: from, body: `Entendido ✅ Sua marcação foi CANCELADA. Se quiser reagendar, diga o dia/horário.` });
+    await sendWhatsAppTextForCompany( companyId, from,  `Entendido ✅ Sua marcação foi CANCELADA. Se quiser reagendar, diga o dia/horário.` );
   } else {
-    await sendWhatsAppTextForCompany({ companyId, to: from, body: `Para CONFIRMAR responda: SIM. Para CANCELAR responda: NÃO.` });
+    ({ companyId, to: from, body: `Para CONFIRMAR responda: SIM. Para CANCELAR responda: NÃO.` });
   }
 
   // 5) Log outbound (best effort)
