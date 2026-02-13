@@ -1,18 +1,29 @@
-import { NextResponse, type NextRequest } from "next/server";
-import { createSupabaseRouteClient } from "@/lib/supabase/route";
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 
-export async function POST(request: NextRequest) {
-  const { supabase, response: cookieResponse } = createSupabaseRouteClient(request);
-
+export async function POST() {
   try {
-    await supabase.auth.signOut();
+    const cookieStore = await cookies();
+    const all = cookieStore.getAll();
 
     const res = NextResponse.json({ ok: true });
-    cookieResponse.cookies.getAll().forEach((c) => {
-      res.cookies.set(c.name, c.value, c.options);
-    });
+
+    // "Desloga" zerando cada cookie (expira no passado)
+    for (const c of all) {
+      res.cookies.set({
+        name: c.name,
+        value: "",
+        // mantém o path padrão se existir, senão "/"
+        path: (c as any).path ?? "/",
+        expires: new Date(0),
+      });
+    }
+
     return res;
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Erro no logout" }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message ?? "Erro" },
+      { status: 500 }
+    );
   }
 }
