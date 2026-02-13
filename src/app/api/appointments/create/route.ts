@@ -118,7 +118,11 @@ export async function POST(req: Request) {
     // Fire-and-forget WhatsApp message (best effort)
     try {
       const { sendWhatsAppTextForCompany } = await import("@/lib/whatsapp/company");
-      await sendWhatsAppTextForCompany({ companyId, to: customerPhone, body: `Olá${customerName ? ` ${customerName}` : ""}! Sua marcação foi criada. Para confirmar responda: SIM. Para cancelar: NÃO.` });
+      await sendWhatsAppTextForCompany(
+  companyId,
+  customerPhone,
+  `Olá${customerName ? ` ${customerName}` : ""}! Sua marcação foi criada. Para confirmar responda: SIM. Para cancelar: NÃO.`
+);
     } catch {
       // ignore
     }
