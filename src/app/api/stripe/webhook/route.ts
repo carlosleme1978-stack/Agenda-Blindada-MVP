@@ -26,7 +26,8 @@ function toIsoFromStripeUnixSeconds(sec: any): string | null {
 export async function POST(req: Request) {
   const stripe = getStripe();
 
-  const sig = headers().get("stripe-signature");
+  const h = await headers();
+  const sig = h.get("stripe-signature");
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
   if (!webhookSecret) {
@@ -231,7 +232,7 @@ export async function POST(req: Request) {
       case "invoice.payment_failed": {
         // Marcar como inativo para bloquear acesso
         const invoice = event.data.object as Stripe.Invoice;
-        const subId = asText(invoice.subscription);
+        const subId = asText((invoice as any).subscription);
 
         if (!subId) break;
 
