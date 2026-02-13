@@ -1,31 +1,45 @@
-import { NextResponse } from 'next/server';
-import { headers } from 'next/headers';
-import Stripe from 'stripe';
-import { getStripe } from '@/lib/stripe/server';
-import { supabaseAdmin } from '@/lib/supabase/admin';
+import { NextResponse } from "next/server";
+import { headers } from "next/headers";
+import Stripe from "stripe";
+import { getStripe } from "@/lib/stripe/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 
 function asText(v: any) {
-  return typeof v === 'string' ? v : v == null ? '' : String(v);
+  return typeof v === "string" ? v : v == null ? "" : String(v);
 }
 
-function planFromEventSubscription(sub: Stripe.Subscription): 'basic' | 'pro' {
-  const m = (sub.metadata || {}) as Record<string, string>;
-  const p = (m.plan || '').toLowerCase();
-  return p === 'pro' ? 'pro' : 'basic';
+function getPlanFromPriceId(priceId: string): "basic" | "pro" {
+  const basic = (process.env.STRIPE_PRICE_BASIC || "").trim();
+  const pro = (process.env.STRIPE_PRICE_PRO || "").trim();
+  if (pro && priceId === pro) return "pro";
+  return "basic";
+}
+
+function toIsoFromStripeUnixSeconds(sec: any): string | null {
+  // Stripe manda unix seconds (number). Tipagem pode variar dependendo do TS/Stripe version.
+  if (!sec || typeof sec !== "number") return null;
+  return new Date(sec * 1000).toISOString();
 }
 
 export async function POST(req: Request) {
   const stripe = getStripe();
-  const sig = (await headers()).get('stripe-signature');
+
+  const sig = headers().get("stripe-signature");
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
   if (!webhookSecret) {
-    return NextResponse.json({ error: 'Missing STRIPE_WEBHOOK_SECRET' }, { status: 500 });
+    return NextResponse.json(
+      { error: "Missing STRIPE_WEBHOOK_SECRET" },
+      { status: 500 }
+    );
   }
   if (!sig) {
-    return NextResponse.json({ error: 'Missing stripe-signature header' }, { status: 400 });
+    return NextResponse.json(
+      { error: "Missing stripe-signature header" },
+      { status: 400 }
+    );
   }
 
   const rawBody = await req.text();
@@ -34,31 +48,66 @@ export async function POST(req: Request) {
   try {
     event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
   } catch (err: any) {
-    return NextResponse.json({ error: `Webhook signature verification failed: ${err?.message ?? 'unknown'}` }, { status: 400 });
+    return NextResponse.json(
+      {
+        error: `Webhook signature verification failed: ${
+          err?.message ?? "unknown"
+        }`,
+      },
+      { status: 400 }
+    );
   }
 
   const db = supabaseAdmin();
 
-  // Idempotency: store the event id (Stripe may retry delivery).
-  const { data: existing } = await db.from('stripe_events').select('id').eq('id', event.id).maybeSingle();
+  // --- Idempotência (Stripe pode reenviar o mesmo evento) ---
+  const { data: existing } = await db
+    .from("stripe_events")
+    .select("id")
+    .eq("id", event.id)
+    .maybeSingle();
+
   if (existing?.id) {
     return NextResponse.json({ ok: true, duplicate: true });
   }
-  const { error: insertEventErr } = await db
-  .from("stripe_events")
-  .insert({ id: event.id, type: event.type });
 
-// Se der erro (ex: duplicate key), ignoramos porque é só idempotência
-// (o duplicate normalmente já foi tratado no SELECT acima)
-if (insertEventErr) {
-  // ignore
-}
+  const { error: insertEventErr } = await db
+    .from("stripe_events")
+    .insert({ id: event.id, type: event.type });
+
+  // Se duplicar por corrida (raro), ignora.
+  if (insertEventErr) {
+    // ignore
+  }
+
+  // Helpers para mapear subscription -> company
+  async function findCompanyIdBySubscriptionId(subId: string): Promise<string> {
+    if (!subId) return "";
+
+    // 1) tenta billing_subscriptions (mais correto)
+    const { data: bs } = await db
+      .from("billing_subscriptions")
+      .select("company_id")
+      .eq("stripe_subscription_id", subId)
+      .maybeSingle();
+
+    if (bs?.company_id) return asText(bs.company_id);
+
+    // 2) fallback: billing_accounts (se alguém gravou lá antes)
+    const { data: ba } = await db
+      .from("billing_accounts")
+      .select("company_id")
+      .eq("stripe_subscription_id", subId)
+      .maybeSingle();
+
+    return asText(ba?.company_id);
+  }
 
   try {
     switch (event.type) {
-      case 'checkout.session.completed': {
-        // We generally finalize linking the paid session -> company on /api/auth/signup (pay-first flow).
-        // Still, if the session has a company_id metadata (logged-in upgrade), we update company now.
+      case "checkout.session.completed": {
+        // OBS: No fluxo pay-first, pode não haver company_id ainda.
+        // Se existir company_id na metadata, a gente já amarra o customer/subscription no billing_accounts.
         const session = event.data.object as Stripe.Checkout.Session;
         const meta = (session.metadata || {}) as Record<string, string>;
         const companyId = asText(meta.company_id);
@@ -67,81 +116,137 @@ if (insertEventErr) {
         const subscriptionId = asText(session.subscription);
 
         if (companyId) {
+          // Atualiza billing_accounts com o vínculo (mesmo antes do subscription.updated)
           await db
-            .from('companies')
+            .from("billing_accounts")
             .update({
               stripe_customer_id: customerId || null,
               stripe_subscription_id: subscriptionId || null,
-              stripe_subscription_status: 'active',
+              status: "active",
+              staff_limit: 5,
+              updated_at: new Date().toISOString(),
             })
-            .eq('id', companyId);
+            .eq("company_id", companyId);
         }
         break;
       }
-      
-      
-      case 'customer.subscription.created':
-      case 'customer.subscription.updated':
-      case 'customer.subscription.deleted': {
-        const sub = event.data.object as Stripe.Subscription;
 
-        const meta = (sub.metadata || {}) as Record<string, string>;
-        const companyId = asText(meta.company_id);
-        const plan = planFromEventSubscription(sub);
+      case "customer.subscription.created":
+      case "customer.subscription.updated":
+      case "customer.subscription.deleted": {
+        const sub = event.data.object as unknown as Stripe.Subscription;
 
-        const status = asText(sub.status);
-        const currentPeriodEnd = sub.current_period_end ? new Date(sub.current_period_end * 1000).toISOString() : null;
-        const cancelAtPeriodEnd = !!sub.cancel_at_period_end;
+        // Tipagem defensiva (resolve teu erro do TS):
+        const subAny = sub as any;
 
-        // Find company: metadata.company_id preferred, otherwise by subscription id.
-        let targetCompanyId = companyId;
-        if (!targetCompanyId) {
-          const { data: row } = await db
-            .from('companies')
-            .select('id')
-            .eq('stripe_subscription_id', sub.id)
-            .maybeSingle();
-          targetCompanyId = row?.id ?? '';
+        const subId = asText(subAny.id);
+        const customerId = asText(subAny.customer);
+
+        // Tenta achar price_id (pode estar em items.data[0].price.id)
+        const priceId =
+          asText(subAny.items?.data?.[0]?.price?.id) ||
+          asText(subAny.items?.data?.[0]?.price) ||
+          asText(subAny.metadata?.price_id);
+
+        const status = asText(subAny.status);
+        const currentPeriodEnd = toIsoFromStripeUnixSeconds(
+          subAny.current_period_end
+        );
+        const cancelAtPeriodEnd = Boolean(subAny.cancel_at_period_end);
+
+        // companyId via metadata (se você gravar) ou fallback por lookup no DB
+        const meta = (subAny.metadata || {}) as Record<string, string>;
+        let companyId = asText(meta.company_id);
+
+        if (!companyId) {
+          companyId = await findCompanyIdBySubscriptionId(subId);
         }
 
-        if (targetCompanyId) {
-          const updates: any = {
-            stripe_customer_id: asText(sub.customer) || null,
-            stripe_subscription_id: sub.id,
-            stripe_subscription_status: status,
-            stripe_current_period_end: currentPeriodEnd,
-            stripe_cancel_at_period_end: cancelAtPeriodEnd,
-          };
+        // Se ainda não achou companyId, não temos como atualizar o SaaS agora (vai amarrar depois no signup finalize)
+        if (!companyId) break;
 
-          // Our business rule: paid plan => staff_limit = 5
-          if (status === 'active' || status === 'trialing') {
-            updates.plan = plan;
-            updates.staff_limit = 5;
-            if (plan === 'basic') updates.sub_basic_status = 'active';
-            if (plan === 'pro') updates.sub_pro_status = 'active';
-          }
+        const plan: "basic" | "pro" = getPlanFromPriceId(priceId);
 
-          if (event.type === 'customer.subscription.deleted' || status === 'canceled' || status === 'unpaid' || status === 'incomplete_expired') {
-            updates.sub_basic_status = 'inactive';
-            updates.sub_pro_status = 'inactive';
-          }
+        // 1) Upsert em billing_subscriptions
+        // Se já existir, update; senão, insert.
+        const { data: existingSub } = await db
+          .from("billing_subscriptions")
+          .select("company_id,stripe_subscription_id")
+          .eq("stripe_subscription_id", subId)
+          .maybeSingle();
 
-          await db.from('companies').update(updates).eq('id', targetCompanyId);
+        if (existingSub?.stripe_subscription_id) {
+          await db
+            .from("billing_subscriptions")
+            .update({
+              company_id: companyId,
+              stripe_subscription_id: subId,
+              stripe_price_id: priceId || null,
+              status: status || null,
+              current_period_end: currentPeriodEnd,
+              cancel_at_period_end: cancelAtPeriodEnd,
+            })
+            .eq("stripe_subscription_id", subId);
+        } else {
+          await db.from("billing_subscriptions").insert({
+            company_id: companyId,
+            stripe_subscription_id: subId,
+            stripe_price_id: priceId || null,
+            status: status || null,
+            current_period_end: currentPeriodEnd,
+            cancel_at_period_end: cancelAtPeriodEnd,
+          });
         }
+
+        // 2) Atualiza billing_accounts (estado atual)
+        const isActive = status === "active" || status === "trialing";
+        const isBad =
+          event.type === "customer.subscription.deleted" ||
+          status === "canceled" ||
+          status === "unpaid" ||
+          status === "incomplete_expired" ||
+          status === "incomplete" ||
+          status === "past_due";
+
+        const nextAccountStatus = isActive ? "active" : isBad ? "inactive" : status;
+
+        await db
+          .from("billing_accounts")
+          .update({
+            plan: plan,
+            status: asText(nextAccountStatus) || null,
+            staff_limit: isActive ? 5 : 0,
+            stripe_customer_id: customerId || null,
+            stripe_subscription_id: subId || null,
+            stripe_price_id: priceId || null,
+            current_period_end: currentPeriodEnd,
+            cancel_at_period_end: cancelAtPeriodEnd,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("company_id", companyId);
 
         break;
       }
 
-      case 'invoice.payment_failed': {
-        // When a payment fails, you can block access by marking subscription inactive.
+      case "invoice.payment_failed": {
+        // Marcar como inativo para bloquear acesso
         const invoice = event.data.object as Stripe.Invoice;
         const subId = asText(invoice.subscription);
-        if (subId) {
-          await db
-            .from('companies')
-            .update({ stripe_subscription_status: 'past_due', sub_basic_status: 'inactive', sub_pro_status: 'inactive' })
-            .eq('stripe_subscription_id', subId);
-        }
+
+        if (!subId) break;
+
+        const companyId = await findCompanyIdBySubscriptionId(subId);
+        if (!companyId) break;
+
+        await db
+          .from("billing_accounts")
+          .update({
+            status: "inactive",
+            staff_limit: 0,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("company_id", companyId);
+
         break;
       }
 
@@ -151,6 +256,9 @@ if (insertEventErr) {
 
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? 'Webhook handler error' }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message ?? "Webhook handler error" },
+      { status: 500 }
+    );
   }
 }
