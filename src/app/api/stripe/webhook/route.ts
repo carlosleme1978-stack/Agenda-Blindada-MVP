@@ -44,7 +44,15 @@ export async function POST(req: Request) {
   if (existing?.id) {
     return NextResponse.json({ ok: true, duplicate: true });
   }
-  await db.from('stripe_events').insert({ id: event.id, type: event.type }).catch(() => null);
+  const { error: insertEventErr } = await db
+  .from("stripe_events")
+  .insert({ id: event.id, type: event.type });
+
+// Se der erro (ex: duplicate key), ignoramos porque é só idempotência
+// (o duplicate normalmente já foi tratado no SELECT acima)
+if (insertEventErr) {
+  // ignore
+}
 
   try {
     switch (event.type) {
@@ -70,7 +78,8 @@ export async function POST(req: Request) {
         }
         break;
       }
-
+      
+      
       case 'customer.subscription.created':
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
