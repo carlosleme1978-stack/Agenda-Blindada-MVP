@@ -1,0 +1,27 @@
+name: Agenda Blindada Cron
+
+on:
+  schedule:
+    - cron: "10 8 * * *"
+    - cron: "20 20 * * *"
+    - cron: "30 10 * * *"
+  workflow_dispatch:
+
+jobs:
+  run-crons:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call reminders-24h
+        run: |
+          curl -sS -X POST "https://agenda-blindada-mvp-mpna.vercel.app/api/cron/reminders-24h" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}"
+
+      - name: Call thanks
+        run: |
+          curl -sS -X POST "https://agenda-blindada-mvp-mpna.vercel.app/api/cron/thanks" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}"
+
+      - name: Call rebook
+        run: |
+          curl -sS -X POST "https://agenda-blindada-mvp-mpna.vercel.app/api/cron/rebook" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}"
