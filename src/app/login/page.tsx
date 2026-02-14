@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -153,53 +154,83 @@ export default function Login() {
               </div>
             </div>
 
-            <form onSubmit={onSubmit}>
-              <label style={{ fontSize: 13, fontWeight: 800 }}>Email</label>
-              <input
-                style={{ ...inputStyle, marginTop: 6 }}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="seu@email.com"
-                autoComplete="email"
-              />
+           <form onSubmit={onSubmit}>
+  {/* EMAIL */}
+  <label style={{ fontSize: 13, fontWeight: 800 }}>Email</label>
+  <input
+    style={{ ...inputStyle, marginTop: 6 }}
+    value={email}
+    onChange={(e) => setEmail(e.target.value)}
+    placeholder="seu@email.com"
+    autoComplete="email"
+  />
 
-              <div style={{ height: 12 }} />
+  <div style={{ height: 16 }} />
 
-              <label style={{ fontSize: 13, fontWeight: 800 }}>Password</label>
-              <input
-                type="password"
-                style={{ ...inputStyle, marginTop: 6 }}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                autoComplete="current-password"
-              />
+  {/* PASSWORD */}
+  <label style={{ fontSize: 13, fontWeight: 800 }}>Password</label>
+  <input
+    type="password"
+    style={{ ...inputStyle, marginTop: 6 }}
+    value={password}
+    onChange={(e) => setPassword(e.target.value)}
+    placeholder="••••••••"
+    autoComplete="current-password"
+  />
 
-              <div style={{ height: 14 }} />
+  {/* LINK ESQUECI SENHA */}
+  <div
+    style={{
+      marginTop: 6,
+      display: "flex",
+      justifyContent: "flex-end",
+    }}
+  >
+    <Link
+      href="/forgot-password"
+      style={{
+        fontSize: 12,
+        fontWeight: 600,
+        color: "#2563eb",
+        textDecoration: "none",
+      }}
+    >
+      Esqueci a senha
+    </Link>
+  </div>
 
-              <button style={{ ...buttonStyle, opacity: loading ? 0.85 : 1 }} disabled={loading}>
-                {loading ? "A entrar..." : "Entrar"}
-              </button>
+  <div style={{ height: 18 }} />
 
-              {msg && (
-                <p
-                  className="msg"
-                  style={{
-                    marginTop: 12,
-                    marginBottom: 0,
-                    color: "#b91c1c",
-                    background: "rgba(185, 28, 28, 0.07)",
-                    border: "1px solid rgba(185, 28, 28, 0.18)",
-                    padding: "10px 12px",
-                    borderRadius: 12,
-                    fontSize: 13,
-                  }}
-                >
-                  {msg}
-                </p>
-              )}
-            </form>
+  {/* BOTÃO */}
+  <button
+    style={{
+      ...buttonStyle,
+      opacity: loading ? 0.85 : 1,
+    }}
+    disabled={loading}
+  >
+    {loading ? "A entrar..." : "Entrar"}
+  </button>
 
+  {/* MENSAGEM DE ERRO */}
+  {msg && (
+    <p
+      className="msg"
+      style={{
+        marginTop: 14,
+        marginBottom: 0,
+        color: "#b91c1c",
+        background: "rgba(185, 28, 28, 0.07)",
+        border: "1px solid rgba(185, 28, 28, 0.18)",
+        padding: "10px 12px",
+        borderRadius: 12,
+        fontSize: 13,
+      }}
+    >
+      {msg}
+    </p>
+  )}
+</form>
             
             <div style={{ marginTop: 14, fontSize: 13, opacity: 0.8 }}>
               Ainda não tem conta? <a href="/signup" style={{ fontWeight: 900 }}>Criar conta</a>
