@@ -12,6 +12,12 @@ function parseHashParams() {
   return new URLSearchParams(hash);
 }
 
+function clearUrl() {
+  if (typeof window === "undefined") return;
+  // remove ?code= e/ou hash com tokens, evitando falhar ao dar refresh
+  window.history.replaceState({}, document.title, "/reset-password");
+}
+
 export default function ResetPasswordPage() {
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
@@ -58,26 +64,30 @@ export default function ResetPasswordPage() {
     boxShadow: "0 16px 30px rgba(59,130,246,0.22)",
   } as const;
 
-  // ✅ Suporta link com ?code= (PKCE) e também links antigos com #access_token=
   useEffect(() => {
     (async () => {
       setMsg(null);
 
-      // 1) Se vier com ?code=
-      const code = typeof window !== "undefined"
-        ? new URLSearchParams(window.location.search).get("code")
-        : null;
+      if (typeof window === "undefined") return;
+
+      const qs = new URLSearchParams(window.location.search);
+      const code = qs.get("code");
 
       try {
         if (code) {
+          // ✅ PKCE link: troca code por sessão
           const { error } = await supabaseBrowser.auth.exchangeCodeForSession(code);
+
+          // Mesmo quando dá erro, é melhor limpar a URL (evita repetir)
+          clearUrl();
+
           if (error) {
-            setMsg("O link é inválido ou expirou. Peça um novo link.");
             setReady(false);
+            setMsg("O link é inválido ou expirou. Peça um novo link.");
             return;
           }
         } else {
-          // 2) Fallback para #access_token=
+          // ✅ Links antigos: tokens no hash
           const hp = parseHashParams();
 
           const errorCode = hp.get("error_code");
@@ -85,13 +95,14 @@ export default function ResetPasswordPage() {
           const errorDesc = hp.get("error_description");
 
           if (error || errorCode) {
+            clearUrl();
+            setReady(false);
             setMsg(
               decodeURIComponent(errorDesc || "") ||
                 (errorCode === "otp_expired"
                   ? "O link expirou. Peça um novo link."
                   : "Não foi possível validar o link. Peça um novo.")
             );
-            setReady(false);
             return;
           }
 
@@ -103,21 +114,29 @@ export default function ResetPasswordPage() {
               access_token,
               refresh_token,
             });
+
+            clearUrl();
+
             if (setErr) {
-              setMsg("O link é inválido ou expirou. Peça um novo link.");
               setReady(false);
+              setMsg("O link é inválido ou expirou. Peça um novo link.");
               return;
             }
           }
         }
 
+        // ✅ Sessão validada?
         const { data } = await supabaseBrowser.auth.getSession();
         const ok = !!data.session;
         setReady(ok);
+
         if (!ok) {
-          setMsg("Abra esta página usando o link recebido no email (o link pode expirar).");
+          setMsg(
+            "Abra esta página usando o link recebido no email (o link pode expirar)."
+          );
         }
       } catch {
+        clearUrl();
         setReady(false);
         setMsg("Não foi possível validar o link. Peça um novo link.");
       }
@@ -144,6 +163,7 @@ export default function ResetPasswordPage() {
         setMsg("Não consegui atualizar a senha. Peça um novo link e tente novamente.");
         return;
       }
+
       setMsg("✅ Senha atualizada! Agora você pode entrar com a nova senha.");
     } finally {
       setLoading(false);
