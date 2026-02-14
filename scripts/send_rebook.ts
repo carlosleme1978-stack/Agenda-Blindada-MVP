@@ -1,4 +1,4 @@
-import { adminClient, sendWhatsApp } from "./_common";
+import { adminClient, sendWhatsApp, registerDeliveryOnce } from "./_common";
 import { pathToFileURL } from "url";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -12,12 +12,13 @@ export async function runRebook() {
   const days = 28;
   const center = Date.now() - days * DAY;
 
+  // janela de 2h: 28d atrás +/- 1h
   const from = new Date(center - HOUR);
   const to = new Date(center + HOUR);
 
   const { data, error } = await db
     .from("appointments")
-    .select("id,start_time,customers:customers(phone,name)")
+    .select("id,company_id,start_time,customers:customers(phone,name)")
     .eq("status", "ATTENDED")
     .gte("start_time", from.toISOString())
     .lte("start_time", to.toISOString());
@@ -26,6 +27,7 @@ export async function runRebook() {
 
   let sent = 0;
   let skipped = 0;
+  let duplicated = 0;
 
   for (const a of (data ?? []) as any[]) {
     const raw = a.customers;
@@ -33,6 +35,18 @@ export async function runRebook() {
 
     if (!c?.phone) {
       skipped++;
+      continue;
+    }
+
+    // ✅ idempotência por appointment
+    const first = await registerDeliveryOnce(db, {
+      company_id: a.company_id,
+      appointment_id: a.id,
+      type: "rebook",
+    });
+
+    if (!first) {
+      duplicated++;
       continue;
     }
 
@@ -48,6 +62,7 @@ export async function runRebook() {
     matched: data?.length ?? 0,
     sent,
     skipped,
+    duplicated,
     window: { from: from.toISOString(), to: to.toISOString() },
   });
 }

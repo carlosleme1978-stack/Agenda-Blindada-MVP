@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { rateLimitOr429, getClientIp } from "@/lib/rate-limit";
 import { runRebook } from "@/../scripts/send_rebook";
+import { adminClient, tryAcquireLock, releaseLock } from "@/../scripts/_common";
 
 export const runtime = "nodejs";
 
@@ -14,13 +15,30 @@ export async function POST(request: NextRequest) {
   if (secret && provided !== secret) return unauthorized();
 
   const ip = getClientIp(request as any);
-  const limited = rateLimitOr429(request as any, { key: "rebook:" + ip, limit: 30, windowMs: 60_000 });
+  const limited = rateLimitOr429(request as any, {
+    key: "rebook:" + ip,
+    limit: 30,
+    windowMs: 60_000,
+  });
   if (limited) return limited;
+
+  const db = adminClient();
+  const lockKey = "cron:rebook";
+  const locked = await tryAcquireLock(db, lockKey, 15 * 60);
+  if (!locked) {
+    return NextResponse.json({ ok: true, skipped: "locked" });
+  }
 
   try {
     await runRebook();
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Cron error" }, { status: 500 });
+    return NextResponse.json({ error: e?.message || "Cron failed" }, { status: 500 });
+  } finally {
+    try {
+      await releaseLock(db, lockKey);
+    } catch {
+      // ignore
+    }
   }
 }

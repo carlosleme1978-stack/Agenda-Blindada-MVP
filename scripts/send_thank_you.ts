@@ -1,4 +1,4 @@
-import { adminClient, sendWhatsApp } from "./_common";
+import { adminClient, sendWhatsApp, registerDeliveryOnce } from "./_common";
 import { pathToFileURL } from "url";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -11,7 +11,7 @@ export async function runThanks() {
 
   const { data, error } = await db
     .from("appointments")
-    .select("id,start_time,customers:customers(phone,name)")
+    .select("id,company_id,start_time,customers:customers(phone,name)")
     .eq("status", "ATTENDED")
     .gte("start_time", from.toISOString())
     .lte("start_time", new Date(now).toISOString());
@@ -20,6 +20,7 @@ export async function runThanks() {
 
   let sent = 0;
   let skipped = 0;
+  let duplicated = 0;
 
   for (const a of (data ?? []) as any[]) {
     const raw = a.customers;
@@ -27,6 +28,17 @@ export async function runThanks() {
 
     if (!c?.phone) {
       skipped++;
+      continue;
+    }
+
+    const first = await registerDeliveryOnce(db, {
+      company_id: a.company_id,
+      appointment_id: a.id,
+      type: "thanks",
+    });
+
+    if (!first) {
+      duplicated++;
       continue;
     }
 
@@ -38,7 +50,12 @@ export async function runThanks() {
     await sleep(200);
   }
 
-  console.log("OK thanks", { matched: data?.length ?? 0, sent, skipped });
+  console.log("OK thanks", {
+    matched: data?.length ?? 0,
+    sent,
+    skipped,
+    duplicated,
+  });
 }
 
 // CLI

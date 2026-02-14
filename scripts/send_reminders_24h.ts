@@ -1,4 +1,4 @@
-import { adminClient, sendWhatsApp } from "./_common";
+import { adminClient, sendWhatsApp, registerDeliveryOnce } from "./_common";
 import { pathToFileURL } from "url";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -12,7 +12,7 @@ export async function runReminders24h() {
 
   const { data, error } = await db
     .from("appointments")
-    .select("id,start_time,customers:customers(phone,name)")
+    .select("id,company_id,start_time,status,customers:customers(phone,name)")
     .in("status", ["BOOKED", "CONFIRMED"])
     .gte("start_time", from.toISOString())
     .lte("start_time", to.toISOString());
@@ -20,11 +20,23 @@ export async function runReminders24h() {
   if (error) throw error;
 
   let sent = 0;
+  let duplicated = 0;
 
   for (const a of (data ?? []) as any[]) {
     const raw = a.customers;
     const c = Array.isArray(raw) ? raw[0] : raw;
     if (!c?.phone) continue;
+
+    const first = await registerDeliveryOnce(db, {
+      company_id: a.company_id,
+      appointment_id: a.id,
+      type: "reminder_24h",
+    });
+
+    if (!first) {
+      duplicated++;
+      continue;
+    }
 
     const when = new Date(a.start_time).toLocaleString("pt-PT", {
       timeZone: "Europe/Lisbon",
@@ -42,7 +54,11 @@ export async function runReminders24h() {
     await sleep(200);
   }
 
-  console.log("OK reminders-24h", { matched: data?.length ?? 0, sent });
+  console.log("OK reminders-24h", {
+    matched: data?.length ?? 0,
+    sent,
+    duplicated,
+  });
 }
 
 // CLI
