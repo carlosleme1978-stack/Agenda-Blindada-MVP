@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { rateLimitOr429, getClientIp } from "@/lib/rate-limit";
-import { runReminders24h } from "@/../scripts/send_reminders_24h.ts";
+import { runReminders24h } from "@/../scripts/send_reminders_24h";
 
 export const runtime = "nodejs";
 

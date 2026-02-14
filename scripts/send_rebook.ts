@@ -1,17 +1,17 @@
 import { adminClient, sendWhatsApp } from "./_common";
+import { pathToFileURL } from "url";
 
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-(async () => {
+export async function runRebook() {
   const db = adminClient();
 
   const days = 28;
   const center = Date.now() - days * DAY;
 
-  // janela de 2h: de 28d+1h atrás até 28d-1h atrás
   const from = new Date(center - HOUR);
   const to = new Date(center + HOUR);
 
@@ -41,8 +41,6 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
     await sendWhatsApp(c.phone, msg);
     sent++;
-
-    // evita bursts (ajuste se quiser)
     await sleep(250);
   }
 
@@ -52,7 +50,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     skipped,
     window: { from: from.toISOString(), to: to.toISOString() },
   });
-})().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+}
+
+// CLI
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runRebook().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}
