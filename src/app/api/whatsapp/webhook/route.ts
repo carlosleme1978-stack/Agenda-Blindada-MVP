@@ -501,7 +501,7 @@ export async function POST(req: NextRequest) {
   // ─────────────────────────────────────────────
   if (!customerHasName() && state !== "ASK_NAME") {
     const hi = getGreetingByTime();
-    const header = `${hi} 👋\nPara continuarmos a tua marcação, qual é o teu *nome*, por favor?`;
+    const header = `${hi} 👋\nPara continuarmos a tua marcação, escreva o teu *nome*, por favor?`;
 
     // guarda o contexto atual para retomar no menu (mínimo necessário)
     const nextMode = ctx?.mode ?? "NEW";
@@ -719,7 +719,7 @@ export async function POST(req: NextRequest) {
     const top = header ? `${header}\n` : "";
     const moreLine = hasMore ? `\n0) Ver mais` : "";
     await replyAndLog(
-  `${top}Escolhe uma categoria:\n${lines}${moreLine}\n9) Categorias\n9) Categorias\n\nResponde com o número.`,
+  `${top}Escolhe uma categoria:\n${lines}${moreLine}\n9) Categorias\n\nResponde com o número por favor.`,
   { step: "category_menu", offset }
 );
 
@@ -783,7 +783,7 @@ export async function POST(req: NextRequest) {
     const pendingId = ctx?.pending_appointment_id ?? null;
     if (pendingId) {
       await db.from("appointments").update({ status: "CANCELLED" }).eq("id", pendingId);
-      await replyAndLog("✅ Ok! Cancelei a tua marcação. Se quiseres marcar outro horário, diz: *QUERO MARCAR*.", {
+      await replyAndLog("✅ Ok! Cancelei a tua marcação. Se quiseres marcar outro horário, escreva: *QUERO MARCAR*.", {
         step: "cancel_ok_pending",
         appointment_id: pendingId,
       });
@@ -804,7 +804,7 @@ export async function POST(req: NextRequest) {
 
     if (!appt?.id) {
       await replyAndLog(
-        "Não encontrei nenhuma marcação futura para cancelar. Se quiseres marcar, diz: *QUERO MARCAR*.",
+        "Não encontrei nenhuma marcação futura para cancelar. Se quiseres marcar, escreva: *QUERO MARCAR*.",
         { step: "cancel_none" }
       );
       await clearSession();
@@ -813,7 +813,7 @@ export async function POST(req: NextRequest) {
 
     await db.from("appointments").update({ status: "CANCELLED" }).eq("id", appt.id);
 
-    await replyAndLog("✅ Ok! A tua marcação foi cancelada. Se quiseres marcar outro horário, diz: *QUERO MARCAR*.", {
+    await replyAndLog("✅ Ok! A tua marcação foi cancelada. Se quiseres marcar outro horário, escreva: *QUERO MARCAR*.", {
       step: "cancel_ok",
       appointment_id: appt.id,
     });
@@ -828,7 +828,7 @@ export async function POST(req: NextRequest) {
 
   if (isIntentValues(text)) {
     await replyAndLog(
-      `Sobre valores 💶\nO preço pode variar consoante o serviço.\n\nPara ver os serviços e valores, responde: *QUERO MARCAR* (eu mostro as categorias e serviços).\n\nSe quiseres falar com alguém, diz: *ATENDENTE*.`,
+      `Sobre valores 💶\nO preço pode variar consoante o serviço.\n\nPara ver os serviços e valores, responde: *QUERO MARCAR* (eu mostro as categorias e serviços).\n\nSe quiseres falar com alguém, escreva: *ATENDENTE*.`,
       { step: "values" }
     );
     return NextResponse.json({ ok: true });
