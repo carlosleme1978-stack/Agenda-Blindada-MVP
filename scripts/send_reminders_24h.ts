@@ -1,6 +1,7 @@
 import { adminClient, sendWhatsApp } from "./_common.ts";
-(async()=>{
-  const db=adminClient();
+
+export async function runReminders24h() {
+const db=adminClient();
   const now=new Date();
   const from=new Date(now.getTime()+(24*60-5)*60_000);
   const to=new Date(now.getTime()+(24*60+5)*60_000);
@@ -13,3 +14,12 @@ import { adminClient, sendWhatsApp } from "./_common.ts";
   }
   console.log("OK reminders", data?.length ?? 0);
 })().catch(e=>{console.error(e);process.exit(1);});
+}
+
+// CLI
+if (process.argv[1] && process.argv[1].includes('send_reminders_24h')) {
+  runReminders24h().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

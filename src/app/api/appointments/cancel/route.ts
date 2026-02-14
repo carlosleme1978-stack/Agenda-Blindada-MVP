@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { getClientIp, rateLimitOr429 } from "@/lib/rate-limit";
 
 export async function POST(req: Request) {
+  const ip = getClientIp(req as any);
+  const limited = rateLimitOr429(req as any, { key: `appt_cancel:` + ip, limit: 40, windowMs: 60_000 });
+  if (limited) return limited;
+
   try {
     const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
     if (!token) return NextResponse.json({ error: "Missing token" }, { status: 401 });

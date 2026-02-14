@@ -1,7 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseRouteClient } from "@/lib/supabase/route";
+import { getClientIp, rateLimitOr429 } from "@/lib/rate-limit";
 
 export async function POST(request: NextRequest) {
+  const ip = getClientIp(request as any);
+  const limited = rateLimitOr429(request as any, { key: `login:` + ip, limit: 8, windowMs: 60_000 });
+  if (limited) return limited;
+
   const { supabase, response: cookieResponse } = createSupabaseRouteClient(request);
 
   try {

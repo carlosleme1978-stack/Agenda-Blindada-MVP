@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getStripe } from "@/lib/stripe/server";
+import { getClientIp, rateLimitOr429 } from "@/lib/rate-limit";
 
 function cleanEmail(e: string) {
   return String(e || "").trim().toLowerCase();
 }
 
 export async function POST(req: Request) {
+  const ip = getClientIp(req as any);
+  const limited = rateLimitOr429(req as any, { key: `signup:` + ip, limit: 5, windowMs: 60_000 });
+  if (limited) return limited;
+
   try {
     const body = (await req.json().catch(() => ({}))) as {
       companyName?: string;
