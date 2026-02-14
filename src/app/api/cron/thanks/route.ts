@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { rateLimitOr429, getClientIp } from "@/lib/rate-limit";
-import { runThankYou } from "@/../scripts/send_thank_you.ts";
-
+import { runThanks } from "@/../scripts/send_thank_you";
 export const runtime = "nodejs";
 
 function unauthorized() {
@@ -18,7 +17,7 @@ export async function POST(request: NextRequest) {
   if (limited) return limited;
 
   try {
-    await runThankYou();
+    await runThanks();
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Cron error" }, { status: 500 });
