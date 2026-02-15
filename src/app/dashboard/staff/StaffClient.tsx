@@ -98,21 +98,23 @@ export default function StaffClient() {
 
     setSaving(true);
     try {
-      const ins = await sb
-        .from("staff")
-        .insert({
-          company_id: company.id,
-          name: nm,
-          phone: phone.trim() || null,
-          role: role.trim() || "staff",
-          active: true,
-        })
-        .select("id,name,phone,role,active,created_at")
-        .single();
+      const { data: sess } = await sb.auth.getSession();
+      const token = sess.session?.access_token;
+      if (!token) throw new Error("Faça login novamente.");
 
-      if (ins.error) throw ins.error;
+      const res = await fetch("/api/staff/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: nm, phone: phone.trim() || null, role: role.trim() || "staff" }),
+      });
 
-      setStaff((p) => [...p, ins.data as any]);
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Erro ao adicionar.");
+      }
+
+      setStaff((p) => [...p, (json.staff as any)]);
       setName("");
       setPhone("");
       setRole("staff");
@@ -152,7 +154,22 @@ export default function StaffClient() {
         </div>
       </div>
 
+
       <div style={card}>
+        {company && (
+          <div style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 13, opacity: 0.8 }}>
+              Plano: <b>{company.plan?.toUpperCase?.() ? company.plan.toUpperCase() : company.plan}</b> · Staff ativo:{" "}
+              <b>{staff.filter((x) => x.active).length}</b> / <b>{company.staff_limit ?? 1}</b>
+            </div>
+            {staff.filter((x) => x.active).length >= (company.staff_limit ?? 1) && (
+              <Link href="/dashboard/billing" style={{ fontSize: 13, fontWeight: 900, textDecoration: "none" }}>
+                Atualizar para PRO →
+              </Link>
+            )}
+          </div>
+        )}
+
         {msg && (
           <div
             style={{
@@ -193,7 +210,12 @@ export default function StaffClient() {
                 </select>
               </div>
 
-              <button disabled={saving} style={btn} onClick={add} type="button">
+              <button
+                disabled={saving || (!!company && staff.filter((x) => x.active).length >= (company.staff_limit ?? 1))}
+                style={btn}
+                onClick={add}
+                type="button"
+              >
                 {saving ? "…" : "Adicionar"}
               </button>
             </div>
