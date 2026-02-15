@@ -101,6 +101,8 @@ export default function DashboardClient() {
   const supabase = useMemo(() => createClient(), []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [meRole, setMeRole] = useState<string>("owner");
+  const [meStaffId, setMeStaffId] = useState<string | null>(null);
   const [rows, setRows] = useState<AppointmentRow[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
 

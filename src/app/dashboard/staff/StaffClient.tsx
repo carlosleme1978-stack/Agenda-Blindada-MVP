@@ -25,6 +25,7 @@ export default function StaffClient() {
   const [staff, setStaff] = useState<StaffRow[]>([]);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
   const [role, setRole] = useState("staff");
 
   const input: React.CSSProperties = {
@@ -102,10 +103,12 @@ export default function StaffClient() {
       const token = sess.session?.access_token;
       if (!token) throw new Error("Faça login novamente.");
 
-      const res = await fetch("/api/staff/create", {
+      const endpoint = (role.trim() || "staff") === "staff" ? "/api/staff/invite" : "/api/staff/create";
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name: nm, phone: phone.trim() || null, role: role.trim() || "staff" }),
+        body: JSON.stringify({ name: nm, phone: phone.trim() || null, role: role.trim() || "staff", email: email.trim() || null }),
       });
 
       const json = await res.json().catch(() => null);
@@ -115,8 +118,12 @@ export default function StaffClient() {
       }
 
       setStaff((p) => [...p, (json.staff as any)]);
+      if (json?.invited_email) {
+        setMsg(`Convite enviado para ${json.invited_email}.`);
+      }
       setName("");
       setPhone("");
+      setEmail("");
       setRole("staff");
     } catch (e: any) {
       setMsg(e?.message ?? "Erro ao adicionar.");
