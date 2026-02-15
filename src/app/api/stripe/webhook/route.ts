@@ -62,23 +62,27 @@ export async function POST(req: Request) {
   const db = supabaseAdmin();
 
   // --- Idempotência (Stripe pode reenviar o mesmo evento) ---
-  const { data: existing } = await db
-    .from("stripe_events")
-    .select("id")
-    .eq("id", event.id)
-    .maybeSingle();
-
-  if (existing?.id) {
-    return NextResponse.json({ ok: true, duplicate: true });
-  }
-
+  // ✅ Fazemos a tentativa de INSERT primeiro. Se for duplicado (23505), retornamos ok.
   const { error: insertEventErr } = await db
     .from("stripe_events")
     .insert({ id: event.id, type: event.type });
 
-  // Se duplicar por corrida (raro), ignora.
   if (insertEventErr) {
-    // ignore
+    // Duplicado (já processado)
+    if ((insertEventErr as any).code === "23505") {
+      return NextResponse.json({ ok: true, duplicate: true });
+    }
+    // Outro erro (tabela ausente, permissão, etc.) => falha explícita
+    return NextResponse.json(
+      { error: insertEventErr.message || "Failed to log stripe event" },
+      { status: 500 }
+    );
+  }
+
+  async function setStripeEventCompanyId(companyId: string) {
+    if (!companyId) return;
+    // best-effort: não falha o webhook por isso
+    await db.from("stripe_events").update({ company_id: companyId }).eq("id", event.id);
   }
 
   // Helpers para mapear subscription -> company
@@ -117,6 +121,7 @@ export async function POST(req: Request) {
         const subscriptionId = asText(session.subscription);
 
         if (companyId) {
+          await setStripeEventCompanyId(companyId);
           // Atualiza billing_accounts com o vínculo (mesmo antes do subscription.updated)
           await db
             .from("billing_accounts")
@@ -165,6 +170,8 @@ export async function POST(req: Request) {
 
         // Se ainda não achou companyId, não temos como atualizar o SaaS agora (vai amarrar depois no signup finalize)
         if (!companyId) break;
+
+        await setStripeEventCompanyId(companyId);
 
         const plan: "basic" | "pro" = getPlanFromPriceId(priceId);
 
@@ -238,6 +245,8 @@ export async function POST(req: Request) {
 
         const companyId = await findCompanyIdBySubscriptionId(subId);
         if (!companyId) break;
+
+        await setStripeEventCompanyId(companyId);
 
         await db
           .from("billing_accounts")
