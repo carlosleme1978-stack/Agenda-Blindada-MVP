@@ -6,39 +6,121 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ensureAccess } from "@/lib/access";
 
+type StaffOpt = { id: string; name: string };
+
 export default function NewClient() {
   const r = useRouter();
 
   const [phone, setPhone] = useState("+351");
   const [name, setName] = useState("");
-  const [start, setStart] = useState("");
+
+  const [date, setDate] = useState(""); // YYYY-MM-DD
   const [minutes, setMinutes] = useState(30);
+
+  const [staff, setStaff] = useState<StaffOpt[]>([]);
+  const [staffId, setStaffId] = useState<string>("");
+
+  const [slots, setSlots] = useState<{ label: string; startISO: string }[]>([]);
+  const [slotISO, setSlotISO] = useState<string>("");
+
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingSlots, setLoadingSlots] = useState(false);
 
   useEffect(() => {
-    // Protect route: requires active subscription + onboarding complete.
+    // Protect route + load staff list
     (async () => {
       const sb = supabaseBrowser;
       await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
+
+      const { data: prof } = await sb.from("profiles").select("role,staff_id").maybeSingle();
+      const role = String((prof as any)?.role ?? "owner");
+
+      if (role === "staff") {
+        const sid = String((prof as any)?.staff_id ?? "");
+        if (sid) {
+          setStaffId(sid);
+          // show only itself (label)
+          const { data: st } = await sb.from("staff").select("id,name").eq("id", sid).maybeSingle();
+          if (st?.id) setStaff([{ id: st.id, name: st.name }]);
+        }
+        return;
+      }
+
+      const { data } = await sb
+        .from("staff")
+        .select("id,name")
+        .eq("active", true)
+        .order("created_at", { ascending: true });
+
+      const list = (data ?? []) as any[];
+      const opts = list.map((x) => ({ id: String(x.id), name: String(x.name) }));
+      setStaff(opts);
+      if (!staffId && opts[0]?.id) setStaffId(opts[0].id);
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const card = useMemo(
-  () => ({
-    width: "100%",        // ✅ importantíssimo
-    margin: "0 auto",     // ✅ centraliza sempre
-    background: "rgba(255,255,255,0.82)",
-    border: "1px solid rgba(0,0,0,0.06)",
-    borderRadius: 20,
-    boxShadow:
-      "0 26px 48px rgba(15, 23, 42, 0.08), 0 8px 18px rgba(15, 23, 42, 0.05)",
-    padding: 18,
-    maxWidth: 450,
-  }),
-  []
-);
+  async function loadSlots(nextDate?: string, nextStaffId?: string, nextMinutes?: number) {
+    const d = nextDate ?? date;
+    const sid = nextStaffId ?? staffId;
+    const dur = nextMinutes ?? minutes;
 
+    setSlots([]);
+    setSlotISO("");
+
+    if (!d || !sid) return;
+
+    setLoadingSlots(true);
+    setMsg(null);
+
+    try {
+      const sb = supabaseBrowser;
+      const { data: sess } = await sb.auth.getSession();
+      const token = sess.session?.access_token;
+      if (!token) {
+        setMsg("Faz login.");
+        return;
+      }
+
+      const res = await fetch(
+        `/api/availability?date=${encodeURIComponent(d)}&staff_id=${encodeURIComponent(sid)}&duration=${encodeURIComponent(
+          String(dur)
+        )}&step=15`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      const j = await res.json().catch(() => null);
+      if (!res.ok) {
+        setMsg(j?.error || "Falha ao carregar horários.");
+        return;
+      }
+
+      const got = (j?.slots ?? []) as { label: string; startISO: string }[];
+      setSlots(got);
+      if (got[0]?.startISO) setSlotISO(got[0].startISO);
+
+      if (!got.length) {
+        setMsg("Sem horários disponíveis para este dia/staff.");
+      }
+    } finally {
+      setLoadingSlots(false);
+    }
+  }
+
+  const card = useMemo(
+    () => ({
+      width: "100%",
+      margin: "0 auto",
+      background: "rgba(255,255,255,0.82)",
+      border: "1px solid rgba(0,0,0,0.06)",
+      borderRadius: 20,
+      boxShadow: "0 26px 48px rgba(15, 23, 42, 0.08), 0 8px 18px rgba(15, 23, 42, 0.05)",
+      padding: 18,
+      maxWidth: 450,
+    }),
+    []
+  );
 
   const inputStyle = {
     width: "100%",
@@ -58,13 +140,14 @@ export default function NewClient() {
     try {
       const sb = supabaseBrowser;
 
-      // Route gate: must be active + onboarded.
       const access = await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
       if (!access.ok) return;
 
       const { data: sess } = await sb.auth.getSession();
       const token = sess.session?.access_token;
       if (!token) return setMsg("Faz login.");
+
+      if (!slotISO) return setMsg("Escolha um horário disponível.");
 
       const res = await fetch("/api/appointments/create", {
         method: "POST",
@@ -75,8 +158,9 @@ export default function NewClient() {
         body: JSON.stringify({
           customerPhone: phone,
           customerName: name,
-          startISO: start,
+          startISO: slotISO,
           durationMinutes: minutes,
+          staffId: staffId || undefined,
         }),
       });
 
@@ -100,114 +184,177 @@ export default function NewClient() {
         padding: "clamp(12px, 3vw, 24px)",
       }}
     >
-<main style={{ maxWidth: 900, margin: "0 auto", width: "100%", flex: 1 }}>
-
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, marginBottom:14, flexWrap:"wrap" }}>
-        <div>
-          <Link href="/dashboard" style={{ textDecoration:"none", fontWeight:800, color:"#0f172a" }}>← Voltar</Link>
-        </div>
-        <div style={{ display:"flex", gap:10, flexWrap:"wrap", justifyContent:"flex-end" }}>
-          <Link href="/dashboard/billing" style={{ display:"inline-flex", alignItems:"center", justifyContent:"center", flex:"1 1 auto", textDecoration:"none", padding:"10px 12px", borderRadius:12, border:"1px solid rgba(2,6,23,0.10)", background:"rgba(255,255,255,0.85)", color:"#0f172a", fontWeight:700, fontSize:13, whiteSpace:"nowrap" }}>Faturação</Link>
-        </div>
-      </div>
-
-      <div style={{ marginBottom: 14 }}>
-        <h1 style={{ margin: 0, fontSize: 26, letterSpacing: -0.6 }}>
-          Nova marcação
-        </h1>
-        <p style={{ margin: "6px 0 0", opacity: 0.7, fontSize: 14 }}>
-          Crie a marcação e inicie o fluxo de confirmação via WhatsApp.
-        </p>
-      </div>
-
-      <div style={card}>
-        <form onSubmit={save}>
-          <label style={{ fontSize: 13, fontWeight: 700 }}>Telefone</label>
-          <input
-            type="tel"
-            inputMode="tel"
-            placeholder="+351912345678"
-            style={{ ...inputStyle, marginTop: 6 }}
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-          />
-          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-            Formato: +351… (o sistema normaliza para WhatsApp automaticamente)
+      <main style={{ maxWidth: 900, margin: "0 auto", width: "100%", flex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+          <div>
+            <Link href="/dashboard" style={{ textDecoration: "none", fontWeight: 800, color: "#0f172a" }}>
+              ← Voltar
+            </Link>
           </div>
-
-          <div style={{ height: 12 }} />
-
-          <label style={{ fontSize: 13, fontWeight: 700 }}>
-            Nome (opcional)
-          </label>
-          <input
-            style={{ ...inputStyle, marginTop: 6 }}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Ex: Carlos"
-          />
-
-          <div style={{ height: 12 }} />
-
-          <label style={{ fontSize: 13, fontWeight: 700 }}>Início</label>
-          <input
-            type="datetime-local"
-            style={{ ...inputStyle, marginTop: 6 }}
-            value={start}
-            onChange={(e) => setStart(e.target.value)}
-          />
-
-          <div style={{ height: 12 }} />
-
-          <label style={{ fontSize: 13, fontWeight: 700 }}>Duração (min)</label>
-          <input
-            type="number"
-            style={{ ...inputStyle, marginTop: 6 }}
-            value={minutes}
-            onChange={(e) => setMinutes(parseInt(e.target.value || "30", 10))}
-            min={5}
-          />
-
-          <div style={{ height: 16 }} />
-
-          <button
-            style={{
-              width: "100%",
-              padding: "12px 14px",
-              borderRadius: 12,
-              border: "1px solid rgba(2, 6, 23, 0.10)",
-              cursor: "pointer",
-              fontWeight: 800,
-              letterSpacing: -0.2,
-              color: "white",
-              background:
-                "linear-gradient(135deg, rgba(17,94,89,1), rgba(59,130,246,1))",
-              boxShadow: "0 14px 26px rgba(59,130,246,0.25)",
-              opacity: loading ? 0.85 : 1,
-            }}
-            disabled={loading}
-          >
-            {loading ? "A guardar..." : "Guardar e voltar"}
-          </button>
-
-          {msg && (
-            <p
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <Link
+              href="/dashboard/billing"
               style={{
-                marginTop: 12,
-                marginBottom: 0,
-                color: "#b91c1c",
-                background: "rgba(185, 28, 28, 0.07)",
-                border: "1px solid rgba(185, 28, 28, 0.18)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flex: "1 1 auto",
+                textDecoration: "none",
                 padding: "10px 12px",
                 borderRadius: 12,
+                border: "1px solid rgba(2,6,23,0.10)",
+                background: "rgba(255,255,255,0.85)",
+                color: "#0f172a",
+                fontWeight: 700,
                 fontSize: 13,
+                whiteSpace: "nowrap",
               }}
             >
-              {msg}
-            </p>
-          )}
-        </form>
-      </div>
+              Faturação
+            </Link>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <h1 style={{ margin: 0, fontSize: 26, letterSpacing: -0.6 }}>Nova marcação</h1>
+          <p style={{ margin: "6px 0 0", opacity: 0.7, fontSize: 14 }}>
+            Escolha o dia e um horário disponível. O sistema impede marcações fora da agenda.
+          </p>
+        </div>
+
+        <div style={card}>
+          <form onSubmit={save}>
+            <label style={{ fontSize: 13, fontWeight: 700 }}>Telefone</label>
+            <input
+              type="tel"
+              inputMode="tel"
+              placeholder="+351912345678"
+              style={{ ...inputStyle, marginTop: 6 }}
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+            />
+            <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+              Formato: +351… (o sistema normaliza para WhatsApp automaticamente)
+            </div>
+
+            <div style={{ height: 12 }} />
+
+            <label style={{ fontSize: 13, fontWeight: 700 }}>Nome (opcional)</label>
+            <input style={{ ...inputStyle, marginTop: 6 }} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Carlos" />
+
+            <div style={{ height: 12 }} />
+
+            <label style={{ fontSize: 13, fontWeight: 700 }}>Staff</label>
+            <select
+              style={{ ...inputStyle, marginTop: 6 }}
+              value={staffId}
+              onChange={(e) => {
+                const v = e.target.value;
+                setStaffId(v);
+                loadSlots(undefined, v, undefined);
+              }}
+              disabled={staff.length <= 1}
+            >
+              {staff.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+              {staff.length <= 1 ? "Apenas 1 staff ativo." : "Selecione quem fará o atendimento."}
+            </div>
+
+            <div style={{ height: 12 }} />
+
+            <label style={{ fontSize: 13, fontWeight: 700 }}>Dia</label>
+            <input
+              type="date"
+              style={{ ...inputStyle, marginTop: 6 }}
+              value={date}
+              onChange={(e) => {
+                const v = e.target.value;
+                setDate(v);
+                loadSlots(v, undefined, undefined);
+              }}
+            />
+
+            <div style={{ height: 12 }} />
+
+            <label style={{ fontSize: 13, fontWeight: 700 }}>Duração (min)</label>
+            <input
+              type="number"
+              style={{ ...inputStyle, marginTop: 6 }}
+              value={minutes}
+              onChange={(e) => {
+                const v = parseInt(e.target.value || "30", 10);
+                setMinutes(v);
+                loadSlots(undefined, undefined, v);
+              }}
+              min={5}
+            />
+
+            <div style={{ height: 12 }} />
+
+            <label style={{ fontSize: 13, fontWeight: 700 }}>Horário disponível</label>
+            <select
+              style={{ ...inputStyle, marginTop: 6 }}
+              value={slotISO}
+              onChange={(e) => setSlotISO(e.target.value)}
+              disabled={!date || !staffId || loadingSlots}
+            >
+              {loadingSlots ? (
+                <option value="">A carregar...</option>
+              ) : slots.length ? (
+                slots.map((s) => (
+                  <option key={s.startISO} value={s.startISO}>
+                    {s.label}
+                  </option>
+                ))
+              ) : (
+                <option value="">Sem horários</option>
+              )}
+            </select>
+
+            <div style={{ height: 16 }} />
+
+            <button
+              style={{
+                width: "100%",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: "1px solid rgba(2, 6, 23, 0.10)",
+                cursor: "pointer",
+                fontWeight: 800,
+                letterSpacing: -0.2,
+                color: "white",
+                background: "linear-gradient(135deg, rgba(17,94,89,1), rgba(59,130,246,1))",
+                boxShadow: "0 14px 26px rgba(59,130,246,0.25)",
+                opacity: loading ? 0.85 : 1,
+              }}
+              disabled={loading}
+            >
+              {loading ? "A guardar..." : "Guardar e voltar"}
+            </button>
+
+            {msg && (
+              <p
+                style={{
+                  marginTop: 12,
+                  marginBottom: 0,
+                  color: "#b91c1c",
+                  background: "rgba(185, 28, 28, 0.07)",
+                  border: "1px solid rgba(185, 28, 28, 0.18)",
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  fontSize: 13,
+                }}
+              >
+                {msg}
+              </p>
+            )}
+          </form>
+        </div>
       </main>
     </div>
   );

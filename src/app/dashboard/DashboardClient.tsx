@@ -307,6 +307,11 @@ export default function DashboardClient() {
       prev.map((r) => (r.id === a.id ? { ...r, status: "CANCELLED" } : r))
     );
 
+    // Aviso se WhatsApp falhar (cancelamento foi feito mesmo assim)
+    if (json && json.whatsapp_sent === false && json.whatsapp_error) {
+      setError(`Cancelado, mas WhatsApp falhou: ${json.whatsapp_error}`);
+    }
+
     await refresh();
   } catch (e: any) {
     setError(e?.message || "Erro ao cancelar");
