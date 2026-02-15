@@ -129,8 +129,19 @@ export default function StaffClient() {
     setMsg(null);
     setSaving(true);
     try {
-      const { error } = await sb.from("staff").update({ active: !active }).eq("id", id);
-      if (error) throw error;
+      const { data: sess } = await sb.auth.getSession();
+      const token = sess.session?.access_token;
+      if (!token) throw new Error("Faça login novamente.");
+
+      const res = await fetch("/api/staff/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ staff_id: id, active: !active }),
+      });
+
+      const json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(json?.error || "Erro ao atualizar.");
+
       setStaff((p) => p.map((s) => (s.id === id ? { ...s, active: !active } : s)));
     } catch (e: any) {
       setMsg(e?.message ?? "Erro ao atualizar.");
@@ -138,7 +149,6 @@ export default function StaffClient() {
       setSaving(false);
     }
   }
-
   return (
     <div style={{ padding: 24 }}>
       <div style={{ maxWidth: 980, margin: "0 auto", display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>

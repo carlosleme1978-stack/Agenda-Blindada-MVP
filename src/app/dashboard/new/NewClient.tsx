@@ -31,7 +31,9 @@ export default function NewClient() {
     // Protect route + load staff list
     (async () => {
       const sb = supabaseBrowser;
-      await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
+      const access = await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
+      if (!access.ok) return;
+      const staffLimit = Number(access.company?.staff_limit ?? 1);
 
       const { data: prof } = await sb.from("profiles").select("role,staff_id").maybeSingle();
       const role = String((prof as any)?.role ?? "owner");
@@ -54,7 +56,8 @@ export default function NewClient() {
         .order("created_at", { ascending: true });
 
       const list = (data ?? []) as any[];
-      const opts = list.map((x) => ({ id: String(x.id), name: String(x.name) }));
+      const optsAll = list.map((x) => ({ id: String(x.id), name: String(x.name) }));
+      const opts = optsAll.slice(0, Math.max(1, staffLimit));
       setStaff(opts);
       if (!staffId && opts[0]?.id) setStaffId(opts[0].id);
     })();
@@ -142,11 +145,15 @@ export default function NewClient() {
 
       const access = await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
       if (!access.ok) return;
+      const staffLimit = Number(access.company?.staff_limit ?? 1);
+      if (!access.ok) return;
 
       const { data: sess } = await sb.auth.getSession();
       const token = sess.session?.access_token;
       if (!token) return setMsg("Faz login.");
 
+      if (!phone || phone.replace(/\D/g, "").length < 9) return setMsg("Informe um telefone válido.");
+      if (!name.trim()) return setMsg("Informe o nome do cliente.");
       if (!slotISO) return setMsg("Escolha um horário disponível.");
 
       const res = await fetch("/api/appointments/create", {
@@ -227,6 +234,7 @@ export default function NewClient() {
             <label style={{ fontSize: 13, fontWeight: 700 }}>Telefone</label>
             <input
               type="tel"
+              required
               inputMode="tel"
               placeholder="+351912345678"
               style={{ ...inputStyle, marginTop: 6 }}
@@ -240,7 +248,7 @@ export default function NewClient() {
             <div style={{ height: 12 }} />
 
             <label style={{ fontSize: 13, fontWeight: 700 }}>Nome (opcional)</label>
-            <input style={{ ...inputStyle, marginTop: 6 }} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Carlos" />
+            <input style={{ ...inputStyle, marginTop: 6 }} required value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Carlos" />
 
             <div style={{ height: 12 }} />
 

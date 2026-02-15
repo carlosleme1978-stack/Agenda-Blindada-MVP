@@ -35,9 +35,10 @@ export async function POST(req: Request) {
     const startISO = String(body.startISO ?? "").trim();
     const durationMinutes = Number(body.durationMinutes ?? 30);
 
-    if (!customerPhone || !startISO || !durationMinutes) {
-      return new NextResponse("Dados inválidos", { status: 400 });
-    }
+    // ✅ agora é obrigatório ter NOME e TELEFONE
+    if (!customerName) return new NextResponse("Nome é obrigatório", { status: 400 });
+    if (!customerPhone || customerPhone.length < 9) return new NextResponse("Telefone inválido", { status: 400 });
+    if (!startISO || !durationMinutes) return new NextResponse("Dados inválidos", { status: 400 });
 
     // company + role + staff_id
     const { data: prof } = await admin
@@ -51,33 +52,49 @@ export async function POST(req: Request) {
 
     const role = String(prof?.role ?? "owner");
 
+    // Plano/limite
+    const { data: comp } = await admin.from("companies").select("plan,staff_limit").eq("id", companyId).single();
+    const plan = String((comp as any)?.plan ?? "basic").toLowerCase();
+    const staffLimit = Number((comp as any)?.staff_limit ?? 1);
+
+    // Lista de staff permitido (primeiros N ativos por created_at)
+    const { data: staffRows } = await admin
+      .from("staff")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("active", true)
+      .order("created_at", { ascending: true });
+
+    const allowedStaffIds = (staffRows ?? []).map((x: any) => String(x.id)).slice(0, Math.max(1, staffLimit));
+
     // Determine staff_id
     let staffId: string | null = null;
 
     if (role === "staff") {
       staffId = prof?.staff_id ?? null;
       if (!staffId) return new NextResponse("Staff sem staff_id no profile", { status: 400 });
+      // staff só pode marcar para si
+      if (!allowedStaffIds.includes(staffId)) {
+        return new NextResponse("Este staff está fora do limite do plano atual.", { status: 402 });
+      }
     } else {
       staffId = String(body.staffId ?? "").trim() || null;
-      if (!staffId) {
-        const { data: s } = await admin
-          .from("staff")
-          .select("id")
-          .eq("company_id", companyId)
-          .eq("active", true)
-          .order("created_at", { ascending: true })
-          .limit(1)
-          .maybeSingle();
-        staffId = s?.id ?? null;
+      if (!staffId) staffId = allowedStaffIds[0] ?? null;
+
+      if (!staffId) return new NextResponse("Nenhum staff ativo encontrado", { status: 400 });
+
+      // ✅ BASIC / limite: não deixa marcar para staff fora do permitido
+      if (!allowedStaffIds.includes(staffId)) {
+        return new NextResponse("Limite de staff do plano atingido. Atualize para PRO para usar mais staff.", {
+          status: 402,
+        });
       }
     }
-
-    if (!staffId) return new NextResponse("Nenhum staff ativo encontrado", { status: 400 });
 
     // Upsert customer
     const { data: custUp, error: custErr } = await admin
       .from("customers")
-      .upsert({ company_id: companyId, phone: customerPhone, name: customerName || null }, { onConflict: "company_id,phone" })
+      .upsert({ company_id: companyId, phone: customerPhone, name: customerName }, { onConflict: "company_id,phone" })
       .select("id,phone,name")
       .single();
 
@@ -111,7 +128,7 @@ export async function POST(req: Request) {
         status: "BOOKED",
         staff_id: staffId,
         service_id: serviceId,
-        customer_name_snapshot: customerName || null,
+        customer_name_snapshot: customerName,
       })
       .select("id")
       .single();
@@ -124,10 +141,10 @@ export async function POST(req: Request) {
     try {
       const { sendWhatsAppTextForCompany } = await import("@/lib/whatsapp/company");
       await sendWhatsAppTextForCompany(
-  companyId,
-  customerPhone,
-  `Olá${customerName ? ` ${customerName}` : ""}! Sua marcação foi criada. Para confirmar responda: SIM. Para cancelar: NÃO.`
-);
+        companyId,
+        customerPhone,
+        `Olá ${customerName}! Sua marcação foi criada. Para confirmar responda: SIM. Para cancelar: NÃO.`
+      );
     } catch {
       // ignore
     }

@@ -105,8 +105,28 @@ export async function GET(req: Request) {
 
     if (!staffId) return NextResponse.json({ error: "Nenhum staff ativo encontrado" }, { status: 400 });
 
-    const { data: comp } = await admin.from("companies").select("timezone").eq("id", companyId).single();
+    const { data: comp } = await admin.from("companies").select("timezone,plan,staff_limit").eq("id", companyId).single();
     const timeZone = (comp?.timezone as string) || "Europe/Lisbon";
+
+    const staffLimit = Number((comp as any)?.staff_limit ?? 1);
+    const plan = String((comp as any)?.plan ?? "basic").toLowerCase();
+
+    const { data: srows } = await admin
+      .from("staff")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("active", true)
+      .order("created_at", { ascending: true });
+
+    const allowedStaffIds = (srows ?? []).map((x: any) => String(x.id)).slice(0, Math.max(1, staffLimit));
+
+    if (!allowedStaffIds.includes(staffId)) {
+      return NextResponse.json(
+        { error: `Limite de staff do plano ${plan.toUpperCase()} atingido. Atualize para PRO para usar mais staff.` },
+        { status: 402 }
+      );
+    }
+
 
     // Business hours (simple V1 default)
     const open = "09:00";
