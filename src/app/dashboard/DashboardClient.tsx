@@ -208,6 +208,23 @@ const getCompanyId = async (uid: string) => {
         return;
       }
 
+      // tenta obter o plano da company para saber se o filtro por staff é suportado
+      let companyPlan: string | null = null;
+      try {
+        const { data: compRes, error: compErr } = await supabase
+          .from("companies")
+          .select("plan")
+          .eq("id", companyId)
+          .maybeSingle();
+        if (compErr) {
+          console.warn("Erro ao buscar plan da company:", compErr);
+        } else {
+          companyPlan = (compRes as any)?.plan ?? null;
+        }
+      } catch (err) {
+        console.warn("Erro ao buscar plan da company:", err);
+      }
+
       if (role === "owner") {
         const { data: st } = await supabase
           .from("staff")
