@@ -286,22 +286,6 @@ export default function StaffClient() {
                 <div style={{ fontSize: 13, fontWeight: 800 }}>Telefone</div>
                 <input style={{ ...input, marginTop: 6 }} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Opcional" />
               </div>
-
-
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 800 }}>Email (login do staff)</div>
-                {String(company?.plan || "").toLowerCase() === "pro" ? (
-                  <>
-                    <input
-                      style={{ ...input, marginTop: 6 }}
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="staff@empresa.com (opcional)"
-                      autoComplete="email"
-                    />
-                    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-                      Se preencher, o staff recebe convite e terá login próprio. Se deixar vazio, será apenas staff interno (sem acesso).
-                    </div>
                   </>
                 ) : (
                   <div style={{ marginTop: 10, fontSize: 12, opacity: 0.8 }}>
