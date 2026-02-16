@@ -23,7 +23,7 @@ export default function NewClient() {
   const [slots, setSlots] = useState<{ label: string; startISO: string }[]>([]);
   const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
   const [categoryId, setCategoryId] = useState<string>("");
-  const [services, setServices] = useState<{ id: string; name: string; duration_min: number }[]>([]);
+  const [services, setServices] = useState<{ id: string; name: string; duration_minutes: number; category_id?: string | null }[]>([]);
   const [serviceId, setServiceId] = useState<string>("");
   const [slotISO, setSlotISO] = useState<string>("");
 
@@ -48,15 +48,15 @@ export default function NewClient() {
       setCategories(catList.map((c) => ({ id: String(c.id), name: String(c.name) })));
       if (catList[0]?.id) setCategoryId(String(catList[0].id));
 
-      const { data: svs } = await sb.from("services").select("id,name,duration_min,category_id").eq("active", true).order("name");
+      const { data: svs } = await sb.from("services").select("id,name,duration_minutes,category_id").eq("active", true).order("name");
       const svList = (svs ?? []) as any[];
       // filtra pela primeira categoria se existir
       const firstCat = String(catList[0]?.id ?? "");
       const filtered = firstCat ? svList.filter((s) => String(s.category_id) === firstCat) : svList;
-      setServices(filtered.map((s) => ({ id: String(s.id), name: String(s.name), duration_min: Number(s.duration_min ?? 30) })));
+      setServices(filtered.map((s) => ({ id: String(s.id), name: String(s.name), duration_minutes: Number(s.duration_minutes ?? 30), category_id: (s as any).category_id ?? null })));
       if (filtered[0]?.id) {
         setServiceId(String(filtered[0].id));
-        setMinutes(Number(filtered[0].duration_min ?? 30));
+        setMinutes(Number(filtered[0].duration_minutes ?? 30));
       }
 
       if (role === "staff") {
@@ -89,14 +89,14 @@ export default function NewClient() {
     setCategoryId(newCatId);
     setServiceId("");
     const sb = supabaseBrowser;
-    const { data: svs } = await sb.from("services").select("id,name,duration_min,category_id").eq("active", true).order("name");
+    const { data: svs } = await sb.from("services").select("id,name,duration_minutes,category_id").eq("active", true).order("name");
     const svList = (svs ?? []) as any[];
     const filtered = newCatId ? svList.filter((s) => String(s.category_id) === String(newCatId)) : svList;
-    setServices(filtered.map((s) => ({ id: String(s.id), name: String(s.name), duration_min: Number(s.duration_min ?? 30) })));
+    setServices(filtered.map((s) => ({ id: String(s.id), name: String(s.name), duration_minutes: Number(s.duration_minutes ?? 30), category_id: (s as any).category_id ?? null })));
     if (filtered[0]?.id) {
       setServiceId(String(filtered[0].id));
-      setMinutes(Number(filtered[0].duration_min ?? 30));
-      if (date && staffId) await loadSlots(undefined, undefined, Number(filtered[0].duration_min ?? 30));
+      setMinutes(Number(filtered[0].duration_minutes ?? 30));
+      if (date && staffId) await loadSlots(undefined, undefined, Number(filtered[0].duration_minutes ?? 30));
     }
   }
 
@@ -179,7 +179,7 @@ export default function NewClient() {
     try {
       const sb = supabaseBrowser;
 
-      const access = await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
+      const access = const access = await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
       if (!access.ok) return;
       const staffLimit = Number(access.company?.staff_limit ?? 1);
       if (!access.ok) return;
@@ -318,9 +318,9 @@ export default function NewClient() {
                 const v = e.target.value;
                 setServiceId(v);
                 const s = services.find((x) => x.id === v);
-                if (s?.duration_min) {
-                  setMinutes(s.duration_min);
-                  loadSlots(undefined, undefined, s.duration_min);
+                if (s?.duration_minutes) {
+                  setMinutes(s.duration_minutes);
+                  loadSlots(undefined, undefined, s.duration_minutes);
                 }
               }}
               disabled={!services.length}
@@ -328,7 +328,7 @@ export default function NewClient() {
               {services.length ? (
                 services.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.name} ({s.duration_min} min)
+                    {s.name} ({s.duration_minutes} min)
                   </option>
                 ))
               ) : (
