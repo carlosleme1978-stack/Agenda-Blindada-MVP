@@ -62,6 +62,26 @@ export default function StaffClient() {
     margin: "0 auto",
   };
 
+  const rowBtn: React.CSSProperties = {
+    padding: "8px 10px",
+    borderRadius: 12,
+    border: "1px solid rgba(2, 6, 23, 0.10)",
+    cursor: "pointer",
+    fontWeight: 900,
+    letterSpacing: -0.2,
+    background: "rgba(255,255,255,0.85)",
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    padding: "8px 10px",
+    borderRadius: 12,
+    border: "1px solid rgba(2, 6, 23, 0.12)",
+    outline: "none",
+    fontSize: 13,
+    background: "rgba(255,255,255,0.95)",
+  };
+
   async function load() {
     setLoading(true);
     setMsg(null);
