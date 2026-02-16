@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
@@ -99,10 +100,13 @@ function cleanStr(x: any) {
 
 export default function DashboardClient() {
   const supabase = useMemo(() => createClient(), []);
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [meRole, setMeRole] = useState<string>("owner");
   const [meStaffId, setMeStaffId] = useState<string | null>(null);
+  const [staffList, setStaffList] = useState<{ id: string; name: string }[]>([]);
+  const [ownerStaffFilter, setOwnerStaffFilter] = useState<string>("");
   const [metricsToday, setMetricsToday] = useState<number>(0);
   const [metricsWeek, setMetricsWeek] = useState<number>(0);
   const [rows, setRows] = useState<AppointmentRow[]>([]);
@@ -150,7 +154,25 @@ export default function DashboardClient() {
       }
     };
 
-    const getCompanyId = async (uid: string) => {
+    
+    const getProfile = async (uid: string) => {
+      // tenta diferentes chaves, pois alguns projetos antigos usavam uid/user_id
+      {
+        const r = await supabase.from("profiles").select("company_id,role,staff_id").eq("id", uid).maybeSingle();
+        if (r.data) return r.data as any;
+      }
+      {
+        const r = await supabase.from("profiles").select("company_id,role,staff_id").eq("uid", uid).maybeSingle();
+        if (r.data) return r.data as any;
+      }
+      {
+        const r = await supabase.from("profiles").select("company_id,role,staff_id").eq("user_id", uid).maybeSingle();
+        if (r.data) return r.data as any;
+      }
+      return null;
+    };
+
+const getCompanyId = async (uid: string) => {
       {
         const r = await supabase.from("profiles").select("company_id").eq("id", uid).maybeSingle();
         if (r.data?.company_id) return r.data.company_id as string;
@@ -167,11 +189,33 @@ export default function DashboardClient() {
     };
 
     const load = async (uid: string) => {
+      const prof = await getProfile(uid);
+      const role = String((prof as any)?.role ?? "owner").toLowerCase();
+      const staffId = ((prof as any)?.staff_id as string) ?? null;
+      setMeRole(role);
+      setMeStaffId(staffId);
+
+
       const companyId = await getCompanyId(uid);
+
+      // owner pode filtrar agenda por staff via ?staff=ID
+      const qsStaff = searchParams?.get("staff") || "";
+      if (qsStaff) setOwnerStaffFilter(qsStaff);
+
       if (!companyId) {
         setError("User sem company. Verifique profiles.company_id.");
         setLoading(false);
         return;
+      }
+
+      if (role === "owner") {
+        const { data: st } = await supabase
+          .from("staff")
+          .select("id,name,active,created_at")
+          .eq("company_id", companyId)
+          .eq("active", true)
+          .order("created_at", { ascending: true });
+        setStaffList(((st as any) ?? []).map((s: any) => ({ id: String(s.id), name: String(s.name) })));
       }
 
       let q = supabase
@@ -193,7 +237,7 @@ export default function DashboardClient() {
       // - se for staff logado => filtra automaticamente
       // - se for owner e escolher um staff => filtra por esse staff
       // calcula um staffFilter local a partir do estado (evita referência indefinida)
-      const staffFilter = meRole === "staff" ? meStaffId : null;
+      const staffFilter = meRole === "staff" ? meStaffId : (ownerStaffFilter || null);
       if (staffFilter) {
         q = (q as any).eq("staff_id", staffFilter);
       }
