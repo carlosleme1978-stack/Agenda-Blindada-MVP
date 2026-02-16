@@ -208,23 +208,6 @@ const getCompanyId = async (uid: string) => {
         return;
       }
 
-      // tenta obter o plano da company para saber se o filtro por staff é suportado
-      let companyPlan: string | null = null;
-      try {
-        const { data: compRes, error: compErr } = await supabase
-          .from("companies")
-          .select("plan")
-          .eq("id", companyId)
-          .maybeSingle();
-        if (compErr) {
-          console.warn("Erro ao buscar plan da company:", compErr);
-        } else {
-          companyPlan = (compRes as any)?.plan ?? null;
-        }
-      } catch (err) {
-        console.warn("Erro ao buscar plan da company:", err);
-      }
-
       if (role === "owner") {
         const { data: st } = await supabase
           .from("staff")
@@ -250,12 +233,16 @@ const getCompanyId = async (uid: string) => {
         )
         .eq("company_id", companyId);
 
+      const { data: compRow } = await supabase.from("companies").select("plan").eq("id", companyId).maybeSingle();
+      const planLocal = String((compRow as any)?.plan ?? "basic").toLowerCase();
+
+
       // Staff view:
       // - se for staff logado => filtra automaticamente
       // - se for owner e escolher um staff => filtra por esse staff
       // calcula um staffFilter local a partir do estado (evita referência indefinida)
       const staffFilter = meRole === "staff" ? meStaffId : (ownerStaffFilter || null);
-      if (staffFilter && companyPlan === "pro") {
+      if (staffFilter && planLocal === "pro") {
         q = (q as any).eq("staff_id", staffFilter);
       }
 
