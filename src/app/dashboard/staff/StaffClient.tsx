@@ -294,8 +294,8 @@ export default function StaffClient() {
                   <>
                     <input
                       style={{ ...input, marginTop: 6 }}
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
+                      value={""}
+                      onChange={() => {}}
                       placeholder="staff@empresa.com (opcional)"
                       autoComplete="email"
                     />
