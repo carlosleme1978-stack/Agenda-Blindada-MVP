@@ -126,15 +126,32 @@ export async function GET(req: Request) {
         { status: 402 }
       );
     }
-
-
-    // Business hours (simple V1 default)
-    const open = "09:00";
-    const close = "18:00";
-
-    // day range in UTC for query (00:00 - 24:00 local tz)
+    // Business hours por staff (configurável)
+// day range in UTC for query (00:00 - 24:00 local tz)
     const dayStartUtc = zonedDateTimeToUtc(date, "00:00", timeZone);
     const dayEndUtc = zonedDateTimeToUtc(date, "23:59", timeZone);
+
+    // day of week in timezone (0=Sun)
+    const localMid = new Date(dayStartUtc.getTime() + 12 * 60 * 60 * 1000);
+    const dow = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(localMid);
+    const map: any = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    const dayOfWeek = map[dow] ?? 1;
+
+    const { data: wh } = await admin
+      .from("staff_working_hours")
+      .select("start_time,end_time,active")
+      .eq("company_id", companyId)
+      .eq("staff_id", staffId)
+      .eq("day_of_week", dayOfWeek)
+      .maybeSingle();
+
+    const open = wh?.active === false ? null : (wh?.start_time as string) || "09:00";
+    const close = wh?.active === false ? null : (wh?.end_time as string) || "18:00";
+
+    if (!open || !close) {
+      return NextResponse.json({ ok: true, date, staff_id: staffId, timeZone, slots: [] });
+    }
+
 
     const { data: appts, error: aErr } = await admin
       .from("appointments")

@@ -103,6 +103,8 @@ export default function DashboardClient() {
   const [error, setError] = useState<string | null>(null);
   const [meRole, setMeRole] = useState<string>("owner");
   const [meStaffId, setMeStaffId] = useState<string | null>(null);
+  const [metricsToday, setMetricsToday] = useState<number>(0);
+  const [metricsWeek, setMetricsWeek] = useState<number>(0);
   const [rows, setRows] = useState<AppointmentRow[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
 

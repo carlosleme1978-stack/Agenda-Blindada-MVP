@@ -22,6 +22,10 @@ export default function StaffClient() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
+  const [hoursOpen, setHoursOpen] = useState(false);
+  const [hoursStaff, setHoursStaff] = useState<StaffRow | null>(null);
+  const [hours, setHours] = useState<{ day_of_week: number; start_time: string; end_time: string; active: boolean }[]>([]);
+
   const [staff, setStaff] = useState<StaffRow[]>([]);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -96,6 +100,10 @@ export default function StaffClient() {
 
     const nm = name.trim();
     if (!nm) return setMsg("Informe o nome.");
+    const isPro = company?.plan === "pro";
+    if (isPro && (role.trim() || "staff") === "staff") {
+      if (!email.trim() || !email.includes("@")) return setMsg("Informe o email do staff (PRO).");
+    }
 
     setSaving(true);
     try {
@@ -103,7 +111,8 @@ export default function StaffClient() {
       const token = sess.session?.access_token;
       if (!token) throw new Error("Faça login novamente.");
 
-      const endpoint = (role.trim() || "staff") === "staff" ? "/api/staff/invite" : "/api/staff/create";
+      const isPro = company?.plan === "pro";
+      const endpoint = (role.trim() || "staff") === "staff" && isPro ? "/api/staff/invite" : "/api/staff/create";
 
       const res = await fetch(endpoint, {
         method: "POST",
@@ -156,6 +165,53 @@ export default function StaffClient() {
       setSaving(false);
     }
   }
+  async function openHours(st: StaffRow) {
+    setMsg(null);
+    setHoursStaff(st);
+    setHoursOpen(true);
+    try {
+      const { data: sess } = await sb.auth.getSession();
+      const token = sess.session?.access_token;
+      if (!token) throw new Error("Faça login novamente.");
+      const res = await fetch(`/api/staff/hours?staff_id=${encodeURIComponent(st.id)}`, { headers: { Authorization: `Bearer ${token}` } });
+      const j = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(j?.error || "Erro ao carregar horários");
+      const got = (j?.hours ?? []) as any[];
+      // normalize + ensure 0..6 rows
+      const by = new Map<number, any>();
+      got.forEach((h) => by.set(Number(h.day_of_week), h));
+      const def = (dow: number) => by.get(dow) || { day_of_week: dow, start_time: "09:00", end_time: "18:00", active: dow >= 1 && dow <= 5 };
+      setHours([0,1,2,3,4,5,6].map(def));
+    } catch (e: any) {
+      setMsg(e?.message || "Erro");
+    }
+  }
+
+  async function saveHours() {
+    if (!hoursStaff) return;
+    setSaving(true);
+    setMsg(null);
+    try {
+      const { data: sess } = await sb.auth.getSession();
+      const token = sess.session?.access_token;
+      if (!token) throw new Error("Faça login novamente.");
+      const res = await fetch("/api/staff/hours", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ staff_id: hoursStaff.id, hours }),
+      });
+      const j = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(j?.error || "Erro ao salvar horários");
+      setHoursOpen(false);
+      setHoursStaff(null);
+      setMsg("Horários atualizados.");
+    } catch (e: any) {
+      setMsg(e?.message || "Erro");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div style={{ padding: 24 }}>
       <div style={{ maxWidth: 980, margin: "0 auto", display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
@@ -263,6 +319,9 @@ export default function StaffClient() {
                     </div>
                     <div style={{ fontFamily: "ui-monospace, SFMono-Regular" }}>{s.phone ?? "—"}</div>
                     <div style={{ fontSize: 12, opacity: 0.7 }}>{s.active ? "Ativo" : "Inativo"}</div>
+                    <button disabled={saving} style={btn} onClick={() => openHours(s)} type="button">
+                      Horários
+                    </button>
                     <button disabled={saving} style={btn} onClick={() => toggleActive(s.id, s.active)} type="button">
                       {s.active ? "Desativar" : "Ativar"}
                     </button>
@@ -273,6 +332,107 @@ export default function StaffClient() {
           </>
         )}
       </div>
+
+      {hoursOpen && hoursStaff && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(2,6,23,0.45)",
+            display: "grid",
+            placeItems: "center",
+            padding: 18,
+            zIndex: 50,
+          }}
+          onClick={() => {
+            if (!saving) {
+              setHoursOpen(false);
+              setHoursStaff(null);
+            }
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 520,
+              background: "rgba(255,255,255,0.95)",
+              border: "1px solid rgba(2,6,23,0.10)",
+              borderRadius: 18,
+              padding: 16,
+              boxShadow: "0 30px 60px rgba(2,6,23,0.18)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 900, fontSize: 16, letterSpacing: -0.3 }}>Horários · {hoursStaff.name}</div>
+                <div style={{ fontSize: 12, opacity: 0.75 }}>Defina horários por dia. Isso controla a disponibilidade.</div>
+              </div>
+              <button
+                style={{ ...rowBtn, padding: "8px 10px" }}
+                onClick={() => {
+                  if (!saving) {
+                    setHoursOpen(false);
+                    setHoursStaff(null);
+                  }
+                }}
+                type="button"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              {hours.map((h) => {
+                const labels = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+                return (
+                  <div key={h.day_of_week} style={{ display: "grid", gridTemplateColumns: "0.6fr 0.5fr 0.5fr 0.6fr", gap: 10, alignItems: "center" }}>
+                    <div style={{ fontWeight: 900 }}>{labels[h.day_of_week]}</div>
+                    <input
+                      style={inputStyle}
+                      type="time"
+                      value={String(h.start_time || "09:00").slice(0, 5)}
+                      disabled={!h.active}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setHours((p) => p.map((x) => (x.day_of_week === h.day_of_week ? { ...x, start_time: v } : x)));
+                      }}
+                    />
+                    <input
+                      style={inputStyle}
+                      type="time"
+                      value={String(h.end_time || "18:00").slice(0, 5)}
+                      disabled={!h.active}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setHours((p) => p.map((x) => (x.day_of_week === h.day_of_week ? { ...x, end_time: v } : x)));
+                      }}
+                    />
+                    <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+                      <input
+                        type="checkbox"
+                        checked={!!h.active}
+                        onChange={(e) => {
+                          const v = e.target.checked;
+                          setHours((p) => p.map((x) => (x.day_of_week === h.day_of_week ? { ...x, active: v } : x)));
+                        }}
+                      />
+                      Ativo
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+              <button style={{ ...btn, flex: 1 }} disabled={saving} onClick={saveHours} type="button">
+                {saving ? "Salvando..." : "Salvar horários"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

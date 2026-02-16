@@ -21,6 +21,10 @@ export default function NewClient() {
   const [staffId, setStaffId] = useState<string>("");
 
   const [slots, setSlots] = useState<{ label: string; startISO: string }[]>([]);
+  const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
+  const [categoryId, setCategoryId] = useState<string>("");
+  const [services, setServices] = useState<{ id: string; name: string; duration_min: number }[]>([]);
+  const [serviceId, setServiceId] = useState<string>("");
   const [slotISO, setSlotISO] = useState<string>("");
 
   const [msg, setMsg] = useState<string | null>(null);
@@ -37,6 +41,23 @@ export default function NewClient() {
 
       const { data: prof } = await sb.from("profiles").select("role,staff_id").maybeSingle();
       const role = String((prof as any)?.role ?? "owner");
+
+      // carrega categorias/serviços
+      const { data: cats } = await sb.from("service_categories").select("id,name").order("name");
+      const catList = (cats ?? []) as any[];
+      setCategories(catList.map((c) => ({ id: String(c.id), name: String(c.name) })));
+      if (catList[0]?.id) setCategoryId(String(catList[0].id));
+
+      const { data: svs } = await sb.from("services").select("id,name,duration_min,category_id").eq("active", true).order("name");
+      const svList = (svs ?? []) as any[];
+      // filtra pela primeira categoria se existir
+      const firstCat = String(catList[0]?.id ?? "");
+      const filtered = firstCat ? svList.filter((s) => String(s.category_id) === firstCat) : svList;
+      setServices(filtered.map((s) => ({ id: String(s.id), name: String(s.name), duration_min: Number(s.duration_min ?? 30) })));
+      if (filtered[0]?.id) {
+        setServiceId(String(filtered[0].id));
+        setMinutes(Number(filtered[0].duration_min ?? 30));
+      }
 
       if (role === "staff") {
         const sid = String((prof as any)?.staff_id ?? "");
@@ -63,6 +84,21 @@ export default function NewClient() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function onChangeCategory(newCatId: string) {
+    setCategoryId(newCatId);
+    setServiceId("");
+    const sb = supabaseBrowser;
+    const { data: svs } = await sb.from("services").select("id,name,duration_min,category_id").eq("active", true).order("name");
+    const svList = (svs ?? []) as any[];
+    const filtered = newCatId ? svList.filter((s) => String(s.category_id) === String(newCatId)) : svList;
+    setServices(filtered.map((s) => ({ id: String(s.id), name: String(s.name), duration_min: Number(s.duration_min ?? 30) })));
+    if (filtered[0]?.id) {
+      setServiceId(String(filtered[0].id));
+      setMinutes(Number(filtered[0].duration_min ?? 30));
+      if (date && staffId) await loadSlots(undefined, undefined, Number(filtered[0].duration_min ?? 30));
+    }
+  }
 
   async function loadSlots(nextDate?: string, nextStaffId?: string, nextMinutes?: number) {
     const d = nextDate ?? date;
@@ -168,6 +204,7 @@ export default function NewClient() {
           startISO: slotISO,
           durationMinutes: minutes,
           staffId: staffId || undefined,
+          serviceId: serviceId || undefined,
         }),
       });
 
@@ -250,7 +287,56 @@ export default function NewClient() {
             <label style={{ fontSize: 13, fontWeight: 700 }}>Nome (opcional)</label>
             <input style={{ ...inputStyle, marginTop: 6 }} required value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Carlos" />
 
+            
             <div style={{ height: 12 }} />
+
+            <label style={{ fontSize: 13, fontWeight: 700 }}>Categoria</label>
+            <select
+              style={{ ...inputStyle, marginTop: 6 }}
+              value={categoryId}
+              onChange={(e) => onChangeCategory(e.target.value)}
+              disabled={!categories.length}
+            >
+              {categories.length ? (
+                categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))
+              ) : (
+                <option value="">Sem categorias</option>
+              )}
+            </select>
+
+            <div style={{ height: 12 }} />
+
+            <label style={{ fontSize: 13, fontWeight: 700 }}>Serviço</label>
+            <select
+              style={{ ...inputStyle, marginTop: 6 }}
+              value={serviceId}
+              onChange={(e) => {
+                const v = e.target.value;
+                setServiceId(v);
+                const s = services.find((x) => x.id === v);
+                if (s?.duration_min) {
+                  setMinutes(s.duration_min);
+                  loadSlots(undefined, undefined, s.duration_min);
+                }
+              }}
+              disabled={!services.length}
+            >
+              {services.length ? (
+                services.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.duration_min} min)
+                  </option>
+                ))
+              ) : (
+                <option value="">Sem serviços</option>
+              )}
+            </select>
+
+<div style={{ height: 12 }} />
 
             <label style={{ fontSize: 13, fontWeight: 700 }}>Staff</label>
             <select

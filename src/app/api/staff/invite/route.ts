@@ -36,6 +36,14 @@ export async function POST(req: Request) {
 
     const { data: comp, error: cErr } = await admin.from("companies").select("plan,staff_limit").eq("id", companyId).single();
     if (cErr || !comp) return NextResponse.json({ error: "Company não encontrada." }, { status: 400 });
+    // ✅ Recurso PRO: login individual de staff
+    if (String((comp as any).plan ?? "basic").toLowerCase() !== "pro") {
+      return NextResponse.json(
+        { error: "Login individual de staff está disponível apenas no plano PRO.", code: "PRO_ONLY" },
+        { status: 402 }
+      );
+    }
+
 
     const staffLimit = Number((comp as any).staff_limit ?? 1);
     const plan = String((comp as any).plan ?? "basic");
