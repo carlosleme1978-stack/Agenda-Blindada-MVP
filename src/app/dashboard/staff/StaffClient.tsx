@@ -62,23 +62,24 @@ export default function StaffClient() {
     margin: "0 auto",
   };
 
-  const rowBtn: React.CSSProperties = {
-    padding: "8px 10px",
-    borderRadius: 10,
-    border: "1px solid rgba(2, 6, 23, 0.10)",
-    cursor: "pointer",
-    fontWeight: 700,
-    background: "rgba(255,255,255,0.95)",
-  };
-
   const inputStyle: React.CSSProperties = {
     width: "100%",
     padding: "8px 10px",
-    borderRadius: 8,
-    border: "1px solid rgba(2,6,23,0.12)",
+    borderRadius: 10,
+    border: "1px solid rgba(2, 6, 23, 0.08)",
     outline: "none",
-    fontSize: 14,
-    background: "transparent",
+    fontSize: 13,
+    background: "rgba(255,255,255,0.95)",
+  };
+
+  const rowBtn: React.CSSProperties = {
+    padding: "8px 10px",
+    borderRadius: 10,
+    border: "1px solid rgba(2, 6, 23, 0.08)",
+    cursor: "pointer",
+    fontWeight: 800,
+    letterSpacing: -0.2,
+    background: "rgba(255,255,255,0.9)",
   };
 
   async function load() {
@@ -120,9 +121,7 @@ export default function StaffClient() {
     const nm = name.trim();
     if (!nm) return setMsg("Informe o nome.");
     const isPro = company?.plan === "pro";
-    if (isPro && (role.trim() || "staff") === "staff") {
-      if (!email.trim() || !email.includes("@")) return setMsg("Informe o email do staff (PRO).");
-    }
+    if (email.trim() && !email.includes("@")) return setMsg("Email inválido.");
 
     setSaving(true);
     try {
@@ -131,7 +130,8 @@ export default function StaffClient() {
       if (!token) throw new Error("Faça login novamente.");
 
       const isPro = company?.plan === "pro";
-      const endpoint = (role.trim() || "staff") === "staff" && isPro ? "/api/staff/invite" : "/api/staff/create";
+      const hasEmail = !!email.trim() && email.includes("@");
+      const endpoint = (role.trim() || "staff") === "staff" && isPro && hasEmail ? "/api/staff/invite" : "/api/staff/create";
 
       const res = await fetch(endpoint, {
         method: "POST",
