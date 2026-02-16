@@ -238,7 +238,7 @@ const getCompanyId = async (uid: string) => {
       // - se for owner e escolher um staff => filtra por esse staff
       // calcula um staffFilter local a partir do estado (evita referência indefinida)
       const staffFilter = meRole === "staff" ? meStaffId : (ownerStaffFilter || null);
-      if (staffFilter) {
+      if (staffFilter && companyPlan === "pro") {
         q = (q as any).eq("staff_id", staffFilter);
       }
 

@@ -29,7 +29,6 @@ export default function StaffClient() {
   const [staff, setStaff] = useState<StaffRow[]>([]);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
   const [role, setRole] = useState("staff");
 
   const input: React.CSSProperties = {
@@ -120,22 +119,19 @@ export default function StaffClient() {
     const nm = name.trim();
     if (!nm) return setMsg("Informe o nome.");
     const isPro = String(company?.plan || "").toLowerCase() === "pro";
-    if (email.trim() && !email.includes("@")) return setMsg("Email inválido.");
-
+    
     setSaving(true);
     try {
       const { data: sess } = await sb.auth.getSession();
       const token = sess.session?.access_token;
       if (!token) throw new Error("Faça login novamente.");
 
-      const isPro = String(company?.plan || "").toLowerCase() === "pro";
-      const hasEmail = !!email.trim() && email.includes("@");
-      const endpoint = (role.trim() || "staff") === "staff" && isPro && hasEmail ? "/api/staff/invite" : "/api/staff/create";
+      const isPro = String(company?.plan || "").toLowerCase() === "pro";      const endpoint = "/api/staff/create";
 
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name: nm, phone: phone.trim() || null, role: role.trim() || "staff", email: email.trim() || null }),
+        body: JSON.stringify({ name: nm, phone: phone.trim() || null, role: role.trim() || "staff" }),
       });
 
       const json = await res.json().catch(() => null);
@@ -150,8 +146,7 @@ export default function StaffClient() {
       }
       setName("");
       setPhone("");
-      setEmail("");
-      setRole("staff");
+            setRole("staff");
     } catch (e: any) {
       setMsg(e?.message ?? "Erro ao adicionar.");
     } finally {
