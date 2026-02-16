@@ -286,18 +286,7 @@ export default function StaffClient() {
                 <div style={{ fontSize: 13, fontWeight: 800 }}>Telefone</div>
                 <input style={{ ...input, marginTop: 6 }} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Opcional" />
               </div>
-                  </>
-                ) : (
-                  <div style={{ marginTop: 10, fontSize: 12, opacity: 0.8 }}>
-                    Login individual de staff está disponível apenas no plano <b>PRO</b>.
-                    <span style={{ marginLeft: 8 }}>
-                      <Link href="/dashboard/billing" style={{ fontWeight: 900, textDecoration: "none" }}>
-                        Atualizar para PRO →
-                      </Link>
-                    </span>
-                  </div>
-                )}
-              </div>
+
 
 
               <div>
