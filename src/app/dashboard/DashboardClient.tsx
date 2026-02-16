@@ -192,8 +192,10 @@ export default function DashboardClient() {
       // Staff view:
       // - se for staff logado => filtra automaticamente
       // - se for owner e escolher um staff => filtra por esse staff
-      if (meStaffId) {
-        q = (q as any).eq("staff_id", meStaffId);
+      // calcula um staffFilter local a partir do estado (evita referência indefinida)
+      const staffFilter = meRole === "staff" ? meStaffId : null;
+      if (staffFilter) {
+        q = (q as any).eq("staff_id", staffFilter);
       }
 
       const { data, error: qErr } = await (q as any)
@@ -215,7 +217,7 @@ export default function DashboardClient() {
     return () => {
       if (unsub) unsub();
     };
-  }, [supabase, meStaffId]);
+  }, [supabase]);
 
   const refresh = async () => {
     if (!userId) return;
