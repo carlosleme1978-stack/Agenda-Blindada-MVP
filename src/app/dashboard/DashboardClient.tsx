@@ -174,7 +174,7 @@ export default function DashboardClient() {
         return;
       }
 
-      const { data, error: qErr } = await supabase
+      let q = supabase
         .from("appointments")
         .select(
           `
@@ -187,7 +187,16 @@ export default function DashboardClient() {
           customers ( name, phone )
         `
         )
-        .eq("company_id", companyId)
+        .eq("company_id", companyId);
+
+      // Staff view:
+      // - se for staff logado => filtra automaticamente
+      // - se for owner e escolher um staff => filtra por esse staff
+      if (meStaffId) {
+        q = (q as any).eq("staff_id", meStaffId);
+      }
+
+      const { data, error: qErr } = await (q as any)
         .order("start_time", { ascending: true })
         .limit(200);
 
@@ -206,7 +215,7 @@ export default function DashboardClient() {
     return () => {
       if (unsub) unsub();
     };
-  }, [supabase]);
+  }, [supabase, meStaffId]);
 
   const refresh = async () => {
     if (!userId) return;

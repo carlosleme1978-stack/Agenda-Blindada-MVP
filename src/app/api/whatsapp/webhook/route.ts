@@ -642,6 +642,22 @@ export async function POST(req: NextRequest) {
 
   const COMPANY_SCHEDULE = await getCompanySchedule();
 
+  // ─────────────────────────────────────────────
+  // Plano e staff (PRO: perguntar qual staff)
+  // ─────────────────────────────────────────────
+  const { data: companyRow } = await db.from("companies").select("plan,staff_limit").eq("id", companyId).maybeSingle();
+  const COMPANY_PLAN = String((companyRow as any)?.plan ?? "basic").toLowerCase();
+
+  const { data: staffRows } = await db
+    .from("staff")
+    .select("id,name,active,created_at")
+    .eq("company_id", companyId)
+    .eq("active", true)
+    .order("created_at", { ascending: true });
+
+  const ACTIVE_STAFF = (staffRows ?? []) as any[];
+
+
   function isSlotInLunchBreak(slot: { startISO: string; endISO: string }, isoDate: string) {
     if (!COMPANY_SCHEDULE.lunchBreak.enabled) return false;
 
@@ -650,11 +666,12 @@ export async function POST(req: NextRequest) {
     return overlaps(slot.startISO, slot.endISO, lbStart, lbEnd);
   }
 
-  async function countAppointmentsForDay(isoDate: string) {
+  
+  async function countAppointmentsForDay(isoDate: string, staffId?: string | null) {
     const dayStart = `${isoDate}T00:00:00.000Z`;
     const dayEnd = `${isoDate}T23:59:59.999Z`;
 
-    const { count, error } = await db
+    let q = db
       .from("appointments")
       .select("*", { count: "exact", head: true })
       .eq("company_id", companyId)
@@ -662,18 +679,27 @@ export async function POST(req: NextRequest) {
       .lte("start_time", dayEnd)
       .in("status", ["BOOKED", "CONFIRMED"]);
 
+    if (staffId) q = (q as any).eq("staff_id", staffId);
+
+    const { count, error } = await (q as any);
+
     if (error) console.error("countAppointmentsForDay error:", error);
     return count ?? 0;
   }
 
-  async function countOverlappingAppointments(startISO: string, endISO: string) {
-    const { count, error } = await db
+  
+  async function countOverlappingAppointments(startISO: string, endISO: string, staffId?: string | null) {
+    let q = db
       .from("appointments")
       .select("*", { count: "exact", head: true })
       .eq("company_id", companyId)
       .in("status", ["BOOKED", "CONFIRMED"])
       .lt("start_time", endISO)
       .gt("end_time", startISO);
+
+    if (staffId) q = (q as any).eq("staff_id", staffId);
+
+    const { count, error } = await (q as any);
 
     if (error) console.error("countOverlappingAppointments error:", error);
     return count ?? 0;
@@ -723,6 +749,25 @@ export async function POST(req: NextRequest) {
   { step: "category_menu", offset }
 );
 
+    return NextResponse.json({ ok: true });
+  }
+
+  async function sendStaffMenu(nextCtx: any, header?: string) {
+    const list = (ACTIVE_STAFF ?? []).slice(0, 9);
+    if (!list.length) {
+      // fallback: segue sem staff
+      await setSession("ASK_DAY", nextCtx);
+      await replyAndLog("Qual dia você prefere? (ex: hoje / amanhã / 15/02)", { step: "ask_day_fallback_no_staff" });
+      return NextResponse.json({ ok: true });
+    }
+
+    const lines = list.map((s: any, i: number) => `${i + 1}) ${s.name}`).join("\n");
+    const text =
+      (header ? header + "\n\n" : "") +
+      `Com quem você quer marcar?\n${lines}\n\nResponda com o número.`;
+
+    await setSession("ASK_STAFF", { ...nextCtx, staff_options: list.map((s: any) => ({ id: s.id, name: s.name })) });
+    await replyAndLog(text, { step: "ask_staff" });
     return NextResponse.json({ ok: true });
   }
 
@@ -896,7 +941,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (COMPANY_SCHEDULE.dailyLimit.enabled) {
-      const total = await countAppointmentsForDay(isoDate);
+      const total = await countAppointmentsForDay(isoDate, ctx?.staff_id ?? null);
       if (total >= COMPANY_SCHEDULE.dailyLimit.maxAppointments) {
         await replyAndLog(
           `📅 A agenda de ${formatDatePt(isoDate)} já está completa.\nQueres tentar outro dia? (ex: AMANHÃ ou 10/02)`,
@@ -1236,13 +1281,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    await setSession("ASK_DAY", {
+    const nextCtx = {
       ...ctx,
       service_id: svc.id,
       service_name: svc.name,
       duration_minutes: svc.duration_minutes,
       offset: 0,
-    });
+    };
+
+    if (COMPANY_PLAN === "pro" && (ACTIVE_STAFF?.length ?? 0) > 1) {
+      return await sendStaffMenu(nextCtx);
+    }
+
+    await setSession("ASK_DAY", nextCtx);
 
     const price = formatPriceEur(svc.price_cents);
     const pricePart = price ? ` (${price})` : "";
@@ -1251,6 +1302,24 @@ export async function POST(req: NextRequest) {
       step: "day",
     });
 
+    return NextResponse.json({ ok: true });
+  }
+
+
+  if (state === "ASK_STAFF") {
+    const opts: any[] = Array.isArray(ctx?.staff_options) ? ctx.staff_options : [];
+    const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
+    const n = Number(nRaw);
+
+    if (!Number.isFinite(n) || n < 1 || n > opts.length) {
+      await replyAndLog("Responda com o número do staff na lista 😊", { step: "staff_retry" });
+      return NextResponse.json({ ok: true });
+    }
+
+    const chosen = opts[n - 1];
+    const nextCtx = { ...ctx, staff_id: chosen?.id ?? null, staff_name: chosen?.name ?? null, offset: 0 };
+    await setSession("ASK_DAY", nextCtx);
+    await replyAndLog("Perfeito! Agora me diga o dia (ex: hoje / amanhã / 15/02).", { step: "staff_chosen" });
     return NextResponse.json({ ok: true });
   }
 
@@ -1329,7 +1398,7 @@ if (state === "ASK_DAY") {
     }
 
     if (COMPANY_SCHEDULE.dailyLimit.enabled) {
-      const total = await countAppointmentsForDay(isoDate);
+      const total = await countAppointmentsForDay(isoDate, ctx?.staff_id ?? null);
       if (total >= COMPANY_SCHEDULE.dailyLimit.maxAppointments) {
         await clearSession();
         await replyAndLog(
@@ -1340,7 +1409,7 @@ if (state === "ASK_DAY") {
       }
     }
 
-    const usedNow = await countOverlappingAppointments(chosen.startISO, chosen.endISO);
+    const usedNow = await countOverlappingAppointments(chosen.startISO, chosen.endISO, ctx?.staff_id ?? null);
     if (usedNow >= COMPANY_SCHEDULE.slotCapacity) {
       await replyAndLog(`⚠️ Esse horário acabou de ficar cheio.\nEscolhe outro (1, 2, 3) ou 4 para ver mais.`, {
         step: "slot_capacity_full",
@@ -1369,6 +1438,7 @@ if (state === "ASK_DAY") {
         service_id: ctx?.service_id ?? null,
         service_name_snapshot: ctx?.service_name ?? null,
         service_duration_minutes_snapshot: Number(ctx?.duration_minutes) || null,
+        staff_id: ctx?.staff_id ?? null,
       })
       .select("id")
       .single();

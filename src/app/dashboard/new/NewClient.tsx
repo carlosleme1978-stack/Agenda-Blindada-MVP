@@ -179,7 +179,7 @@ export default function NewClient() {
     try {
       const sb = supabaseBrowser;
 
-      const access = await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
+      const access = const access = await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
       if (!access.ok) return;
       const staffLimit = Number(access.company?.staff_limit ?? 1);
       if (!access.ok) return;
