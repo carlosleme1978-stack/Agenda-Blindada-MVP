@@ -12,6 +12,7 @@ type AppointmentRow = {
   status: string;
   customer_id: string;
   customer_name_snapshot: string | null;
+  staff_id?: string | null;
   customers?: { name: string | null; phone: string | null } | null;
 };
 
@@ -107,6 +108,7 @@ export default function DashboardClient() {
   const [meStaffId, setMeStaffId] = useState<string | null>(null);
   const [staffList, setStaffList] = useState<{ id: string; name: string }[]>([]);
   const [ownerStaffFilter, setOwnerStaffFilter] = useState<string>("");
+  const [companyPlan, setCompanyPlan] = useState<string>("basic");
   const [metricsToday, setMetricsToday] = useState<number>(0);
   const [metricsWeek, setMetricsWeek] = useState<number>(0);
   const [rows, setRows] = useState<AppointmentRow[]>([]);
@@ -228,6 +230,7 @@ const getCompanyId = async (uid: string) => {
           status,
           customer_id,
           customer_name_snapshot,
+          staff_id,
           customers ( name, phone )
         `
         )
@@ -235,6 +238,7 @@ const getCompanyId = async (uid: string) => {
 
       const { data: compRow } = await supabase.from("companies").select("plan").eq("id", companyId).maybeSingle();
       const planLocal = String((compRow as any)?.plan ?? "basic").toLowerCase();
+      setCompanyPlan(planLocal);
 
 
       // Staff view:
@@ -305,6 +309,7 @@ const getCompanyId = async (uid: string) => {
           status,
           customer_id,
           customer_name_snapshot,
+          staff_id,
           customers ( name, phone )
         `
         )
@@ -663,6 +668,114 @@ const getCompanyId = async (uid: string) => {
           </div>
         </div>
 
+        
+        {companyPlan === "pro" ? (
+          <div className="command">
+            <div className="commandTop">
+              <div>
+                <div className="commandKicker">PRO · Command Center</div>
+                <div className="commandTitle">Controle total da sua agenda</div>
+                <div className="commandSub">
+                  Veja tendências, riscos e performance da equipa — tudo em um só lugar.
+                </div>
+              </div>
+              <div className="commandStats">
+                <div className="mini">
+                  <div className="miniLabel">Hoje</div>
+                  <div className="miniValue">{metricsToday}</div>
+                </div>
+                <div className="mini">
+                  <div className="miniLabel">Esta semana</div>
+                  <div className="miniValue">{metricsWeek}</div>
+                </div>
+                <div className="mini">
+                  <div className="miniLabel">Equipa</div>
+                  <div className="miniValue">{staffList.length}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="commandGrid">
+              <div className="radar">
+                <div className="radarTitle">Radar do Negócio</div>
+                <div className="radarItem">
+                  <span className="dot ok" />
+                  <span>
+                    Próxima marcação: <b>{nextAppointment ? nextAppointment._displayName : "nenhuma"}</b>
+                  </span>
+                </div>
+                {counts.cancelled > 0 ? (
+                  <div className="radarItem">
+                    <span className="dot warn" />
+                    <span>
+                      Você teve <b>{counts.cancelled}</b> cancelamento(s) no filtro atual. Considere confirmar por WhatsApp.
+                    </span>
+                  </div>
+                ) : (
+                  <div className="radarItem">
+                    <span className="dot ok" />
+                    <span>Sem cancelamentos no filtro atual ✅</span>
+                  </div>
+                )}
+                {staffList.length === 0 ? (
+                  <div className="radarItem">
+                    <span className="dot warn" />
+                    <span>
+                      Cadastre seu staff para organizar a equipa e filtrar agendas.
+                      <span style={{ marginLeft: 8 }}>
+                        <Link href="/dashboard/staff" style={{ fontWeight: 900, textDecoration: "none" }}>
+                          Ir para Staff →
+                        </Link>
+                      </span>
+                    </span>
+                  </div>
+                ) : null}
+                <div className="radarItem">
+                  <span className="dot tip" />
+                  <span>Dica: use “Agenda por staff” para ver a lotação de cada atendente.</span>
+                </div>
+              </div>
+
+              <div className="team">
+                <div className="teamTitle">Performance da Equipa</div>
+                <div className="teamGrid">
+                  {staffList.slice(0, 5).map((s) => {
+                    const total = rows.filter((r) => r.staff_id === s.id).length;
+                    const confirmed = rows.filter((r) => r.staff_id === s.id && r.status === "CONFIRMED").length;
+                    const pending = rows.filter((r) => r.staff_id === s.id && (r.status === "BOOKED" || r.status === "PENDING")).length;
+                    const cancelled = rows.filter((r) => r.staff_id === s.id && r.status === "CANCELLED").length;
+
+                    return (
+                      <div key={s.id} className="staffCard">
+                        <div className="staffName">{s.name}</div>
+                        <div className="staffMeta">
+                          <span>Total: <b>{total}</b></span>
+                          <span>Confirm.: <b>{confirmed}</b></span>
+                          <span>Pend.: <b>{pending}</b></span>
+                          <span>Cancel.: <b>{cancelled}</b></span>
+                        </div>
+                        <Link className="btn tiny ghost" href={`/dashboard?staff=${encodeURIComponent(s.id)}`}>
+                          Ver agenda
+                        </Link>
+                      </div>
+                    );
+                  })}
+                  {staffList.length === 0 ? (
+                    <div className="staffCard empty">
+                      <div className="staffName">Sem staff</div>
+                      <div className="staffMeta">Cadastre para habilitar visão por atendente.</div>
+                      <Link className="btn tiny ghost" href="/dashboard/staff">
+                        Cadastrar staff
+                      </Link>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+
         {/* ✅ barra premium de filtros + busca */}
         <div className="toolbar">
           <div className="chips">
@@ -690,6 +803,55 @@ const getCompanyId = async (uid: string) => {
             <button className="btn ghost" onClick={refresh}>
               Atualizar
             </button>
+          </div>
+        </div>
+
+        {/* 👥 Agenda por staff (sempre visível) */}
+        <div className="staffBar">
+          <div className="staffBarLeft">
+            <div className="staffBarTitle">Agenda por staff</div>
+            <div className="staffBarSub">
+              {companyPlan === "pro" ? "No PRO, você filtra a agenda por atendente." : "No BASIC, a agenda por staff está bloqueada."}
+            </div>
+          </div>
+
+          <div className="staffBarRight">
+            <select
+              className="staffSelect"
+              value={ownerStaffFilter}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v && companyPlan !== "pro") {
+                  setError("Para ver a agenda por staff, faça upgrade para o plano PRO.");
+                  return;
+                }
+                setError(null);
+                setOwnerStaffFilter(v);
+                const url = new URL(window.location.href);
+                if (v) url.searchParams.set("staff", v);
+                else url.searchParams.delete("staff");
+                window.history.replaceState({}, "", url.toString());
+                refresh();
+              }}
+              disabled={staffList.length === 0}
+            >
+              <option value="">Empresa (todos)</option>
+              {staffList.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+
+            {companyPlan !== "pro" ? (
+              <Link className="btn tiny" href="/dashboard/billing">
+                Fazer upgrade
+              </Link>
+            ) : ownerStaffFilter ? (
+              <Link className="btn tiny ghost" href={`/dashboard?staff=${encodeURIComponent(ownerStaffFilter)}`}>
+                Abrir agenda
+              </Link>
+            ) : null}
           </div>
         </div>
 
@@ -794,6 +956,163 @@ const getCompanyId = async (uid: string) => {
 }
 
 const premiumCss = `
+/* ───────── Command Center (PRO) ───────── */
+.command{
+  margin-top: 18px;
+  border-radius: 22px;
+  padding: 18px;
+  background: radial-gradient(900px 420px at 20% 0%, rgba(99,102,241,0.22), transparent 60%),
+              radial-gradient(700px 420px at 80% 10%, rgba(16,185,129,0.18), transparent 55%),
+              linear-gradient(135deg, rgba(2,6,23,0.92), rgba(15,23,42,0.92));
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 30px 80px rgba(2,6,23,0.20);
+  color: rgba(255,255,255,0.92);
+}
+.commandTop{
+  display:flex;
+  justify-content:space-between;
+  gap: 16px;
+  align-items:flex-start;
+  flex-wrap:wrap;
+}
+.commandKicker{
+  font-size:12px;
+  font-weight:900;
+  letter-spacing:0.6px;
+  opacity:0.85;
+}
+.commandTitle{
+  margin-top:6px;
+  font-size:22px;
+  font-weight:950;
+  letter-spacing:-0.5px;
+}
+.commandSub{
+  margin-top:6px;
+  font-size:13px;
+  opacity:0.80;
+  max-width: 520px;
+  line-height:1.5;
+}
+.commandStats{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.mini{
+  min-width: 110px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.10);
+}
+.miniLabel{
+  font-size:11px;
+  opacity:0.7;
+  font-weight:900;
+}
+.miniValue{
+  margin-top:6px;
+  font-size:18px;
+  font-weight:950;
+}
+.commandGrid{
+  margin-top: 14px;
+  display:grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 12px;
+}
+@media (max-width: 920px){
+  .commandGrid{ grid-template-columns: 1fr; }
+}
+.radar, .team{
+  border-radius: 18px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
+  padding: 14px;
+}
+.radarTitle, .teamTitle{
+  font-size: 13px;
+  font-weight: 950;
+  letter-spacing: -0.2px;
+  margin-bottom: 10px;
+}
+.radarItem{
+  display:flex;
+  gap:10px;
+  align-items:flex-start;
+  padding: 8px 0;
+  font-size: 13px;
+  line-height: 1.4;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+.radarItem:first-of-type{ border-top: none; }
+.dot{
+  width:10px;height:10px;border-radius:50%;
+  margin-top: 4px;
+  background: rgba(255,255,255,0.22);
+}
+.dot.ok{ background: rgba(16,185,129,0.95); }
+.dot.warn{ background: rgba(249,115,22,0.95); }
+.dot.tip{ background: rgba(99,102,241,0.95); }
+
+.teamGrid{
+  display:grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (max-width: 640px){
+  .teamGrid{ grid-template-columns: 1fr; }
+}
+.staffCard{
+  border-radius: 16px;
+  padding: 12px;
+  background: rgba(2,6,23,0.35);
+  border: 1px solid rgba(255,255,255,0.10);
+}
+.staffCard.empty{ opacity:0.9; }
+.staffName{
+  font-weight: 950;
+  letter-spacing: -0.2px;
+}
+.staffMeta{
+  margin-top: 8px;
+  display:grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+/* ───────── Staff bar ───────── */
+.staffBar{
+  margin-top: 12px;
+  display:flex;
+  justify-content:space-between;
+  gap: 12px;
+  align-items:center;
+  flex-wrap:wrap;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: rgba(255,255,255,0.75);
+  border: 1px solid rgba(2,6,23,0.08);
+  box-shadow: 0 12px 28px rgba(2,6,23,0.06);
+}
+.staffBarTitle{ font-weight: 950; letter-spacing:-0.2px; }
+.staffBarSub{ font-size: 12px; opacity: 0.7; margin-top: 2px; }
+.staffSelect{
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(2,6,23,0.10);
+  background: rgba(255,255,255,0.95);
+  font-weight: 900;
+}
+.btn.tiny{
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-size: 13px;
+}
+
 .wrap{
   min-height:100vh;
   background: radial-gradient(1200px 700px at 10% 0%, rgba(99,102,241,0.10), transparent 60%),
