@@ -754,7 +754,7 @@ const getCompanyId = async (uid: string) => {
                           <span>Pend.: <b>{pending}</b></span>
                           <span>Cancel.: <b>{cancelled}</b></span>
                         </div>
-                        <Link className="btn tiny ghost" href={`/dashboard?staff=${encodeURIComponent(s.id)}`}>
+                        <Link className="btn tiny ghost" href={`/dashboard/staff-view/${encodeURIComponent(s.id)}`}>
                           Ver agenda
                         </Link>
                       </div>
@@ -848,7 +848,7 @@ const getCompanyId = async (uid: string) => {
                 Fazer upgrade
               </Link>
             ) : ownerStaffFilter ? (
-              <Link className="btn tiny ghost" href={`/dashboard?staff=${encodeURIComponent(ownerStaffFilter)}`}>
+              <Link className="btn tiny ghost" href={`/dashboard/staff-view/${encodeURIComponent(ownerStaffFilter)}`}>
                 Abrir agenda
               </Link>
             ) : null}
