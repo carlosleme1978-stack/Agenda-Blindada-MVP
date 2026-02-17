@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { supabaseBrowser } from "@/lib/supabase/browser";
 
 type StaffRow = { id: string; name: string | null; active: boolean | null };
 type CompanyRow = {
@@ -89,8 +88,6 @@ export default function DashboardClient({ initial }: { initial: DashboardInitial
   // Tudo chega do Server Component (blindagem): sem fetch no browser.
   const [loading] = useState(false);
 
-  const supabase = useMemo(() => supabaseBrowser, []);
-
   const [company] = useState<CompanyRow | null>(initial.company ?? null);
   const [companyId] = useState<string | null>(initial.companyId ?? null);
 
@@ -106,6 +103,20 @@ export default function DashboardClient({ initial }: { initial: DashboardInitial
   const staffOcc = initial.staffOcc ?? [];
 
   const isPro = (company?.plan ?? "basic") === "pro" && (company?.sub_pro_status ?? "active") === "active";
+
+  // ✅ Modelo D (solo): visual vivo que muda conforme receita
+  const mood = useMemo(() => {
+    const w = Number(metrics.weekRevenueCents ?? 0);
+    // escala suave (0..1)
+    const s = Math.max(0, Math.min(1, Math.log10(1 + w / 10000) / 2));
+    const a1 = 0.10 + 0.22 * s;
+    const a2 = 0.08 + 0.20 * s;
+    const a3 = 0.06 + 0.18 * s;
+    return {
+      pageBg: `linear-gradient(120deg, rgba(11,18,32,1) 0%, rgba(11,18,32,1) 45%, rgba(15,23,42,1) 100%), radial-gradient(900px 700px at 20% 20%, rgba(139,92,246,${a1}), transparent 60%), radial-gradient(900px 700px at 80% 30%, rgba(59,130,246,${a2}), transparent 55%), radial-gradient(900px 700px at 55% 85%, rgba(16,185,129,${a3}), transparent 55%)`,
+      heroBg: `linear-gradient(135deg, rgba(139,92,246,${0.18 + 0.22 * s}) 0%, rgba(59,130,246,${0.10 + 0.16 * s}) 45%, rgba(16,185,129,${0.08 + 0.14 * s}) 100%)`,
+    };
+  }, [metrics.weekRevenueCents]);
 
   const staffPerf = useMemo(() => {
     const nameById = new Map(staff.map((s) => [String(s.id), String(s.name ?? "—")]));
@@ -143,21 +154,14 @@ export default function DashboardClient({ initial }: { initial: DashboardInitial
     ];
   }, [companyFin]);
 
-  async function handleLogout() {
-    const ok = confirm("Sair da sua conta?");
-    if (!ok) return;
-    await supabase.auth.signOut();
-    window.location.href = "/login";
-  }
-
   return (
-    <main style={{ minHeight: "100vh", padding: 18, background: "linear-gradient(120deg, #0b1220 0%, #0b1220 45%, #0f172a 100%)" }}>
+    <main style={{ minHeight: "100vh", padding: 18, background: mood.pageBg }}>
       <div style={{ maxWidth: 1080, margin: "0 auto" }}>
         <div
           style={{
             padding: 16,
             borderRadius: 20,
-            background: "linear-gradient(135deg, rgba(139,92,246,0.25) 0%, rgba(59,130,246,0.15) 45%, rgba(16,185,129,0.10) 100%)",
+            background: mood.heroBg,
             border: "1px solid rgba(255,255,255,0.10)",
             color: "white",
           }}
@@ -172,11 +176,11 @@ export default function DashboardClient({ initial }: { initial: DashboardInitial
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <Link href="/dashboard/new" style={{ textDecoration: "none", fontWeight: 950, color: "white", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "linear-gradient(135deg, rgba(16,185,129,0.30), rgba(59,130,246,0.20))" }}>
-                Nova marcação
-              </Link>
               <Link href="/dashboard/agenda" style={{ textDecoration: "none", fontWeight: 900, color: "white", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.20)" }}>
                 Abrir Agenda
+              </Link>
+              <Link href="/dashboard/new" style={{ textDecoration: "none", fontWeight: 900, color: "white", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.20)" }}>
+                Nova marcação
               </Link>
               <Link href="/dashboard/crm" style={{ textDecoration: "none", fontWeight: 900, color: "white", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.20)" }}>
                 CRM
@@ -187,12 +191,9 @@ export default function DashboardClient({ initial }: { initial: DashboardInitial
               <Link href="/dashboard/settings" style={{ textDecoration: "none", fontWeight: 900, color: "white", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.20)" }}>
                 Settings
               </Link>
-              <button
-                onClick={handleLogout}
-                style={{ cursor: "pointer", fontWeight: 950, color: "white", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(239,68,68,0.30)", background: "rgba(239,68,68,0.14)" }}
-              >
+              <a href="/api/auth/logout" style={{ textDecoration: "none", fontWeight: 950, color: "white", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.22)" }}>
                 Sair
-              </button>
+              </a>
             </div>
           </div>
 

@@ -15,10 +15,6 @@ export default function NewClient() {
   const [date, setDate] = useState(""); // YYYY-MM-DD
   const [minutes, setMinutes] = useState(30);
 
-  // Modelo Solo: sem staff (1 dono)
-  const [staff, setStaff] = useState<{ id: string; name: string }[]>([]);
-  const [staffId, setStaffId] = useState<string>("");
-
 
   const [slots, setSlots] = useState<{ label: string; startISO: string }[]>([]);
   const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
@@ -33,15 +29,11 @@ export default function NewClient() {
   const [loadingSlots, setLoadingSlots] = useState(false);
 
   useEffect(() => {
-    // Protect route + load staff list
+    // Protect route + load categories/services
     (async () => {
       const sb = supabaseBrowser;
       const access = await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
       if (!access.ok) return;
-      const staffLimit = Number(access.company?.staff_limit ?? 1);
-
-      const { data: prof } = await sb.from("profiles").select("role,staff_id").maybeSingle();
-      const role = String((prof as any)?.role ?? "owner");
 
       // carrega categorias/serviços
       const { data: cats } = await sb.from("service_categories").select("id,name").order("name");
@@ -61,28 +53,6 @@ export default function NewClient() {
         setMinutes(Number(filtered[0].duration_minutes ?? 30));
       }
 
-      if (role === "staff") {
-        const sid = String((prof as any)?.staff_id ?? "");
-        if (sid) {
-          setStaffId(sid);
-          // show only itself (label)
-          const { data: st } = await sb.from("staff").select("id,name").eq("id", sid).maybeSingle();
-          if (st?.id) setStaff([{ id: st.id, name: st.name }]);
-        }
-        return;
-      }
-
-      const { data } = await sb
-        .from("staff")
-        .select("id,name")
-        .eq("active", true)
-        .order("created_at", { ascending: true });
-
-      const list = (data ?? []) as any[];
-      const optsAll = list.map((x) => ({ id: String(x.id), name: String(x.name) }));
-      const opts = optsAll.slice(0, Math.max(1, staffLimit));
-      setStaff(opts);
-      if (!staffId && opts[0]?.id) setStaffId(opts[0].id);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -98,7 +68,7 @@ export default function NewClient() {
     if (filtered[0]?.id) {
       setServiceId(String(filtered[0].id));
       setMinutes(Number(filtered[0].duration_minutes ?? 30));
-      if (date && staffId) await loadSlots(undefined, undefined, Number(filtered[0].duration_minutes ?? 30));
+      if (date) await loadSlots(undefined, undefined, Number(filtered[0].duration_minutes ?? 30));
     }
   }
 
@@ -129,15 +99,14 @@ function fmtMoney(cents: number, currency: string) {
   return `${v} ${currency}`;
 }
 
-async function loadSlots(nextDate?: string, nextStaffId?: string, nextMinutes?: number) {
+async function loadSlots(nextDate?: string, _nextStaffId?: string, nextMinutes?: number) {
     const d = nextDate ?? date;
-    const sid = nextStaffId ?? staffId;
     const dur = nextMinutes ?? minutes;
 
     setSlots([]);
     setSlotISO("");
 
-    if (!d || !sid) return;
+    if (!d) return;
 
     setLoadingSlots(true);
     setMsg(null);
@@ -152,7 +121,7 @@ async function loadSlots(nextDate?: string, nextStaffId?: string, nextMinutes?: 
       }
 
       const res = await fetch(
-        `/api/availability?date=${encodeURIComponent(d)}&staff_id=${encodeURIComponent(sid)}&duration=${encodeURIComponent(String(dur))}&service_ids=${encodeURIComponent(serviceIds.join(","))}&step=15`,
+        `/api/availability?date=${encodeURIComponent(d)}&duration=${encodeURIComponent(String(dur))}&service_ids=${encodeURIComponent(serviceIds.join(","))}&step=15`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
@@ -167,7 +136,7 @@ async function loadSlots(nextDate?: string, nextStaffId?: string, nextMinutes?: 
       if (got[0]?.startISO) setSlotISO(got[0].startISO);
 
       if (!got.length) {
-        setMsg("Sem horários disponíveis para este dia/staff.");
+        setMsg("Sem horários disponíveis para este dia.");
       }
     } finally {
       setLoadingSlots(false);
@@ -208,7 +177,6 @@ async function loadSlots(nextDate?: string, nextStaffId?: string, nextMinutes?: 
 
       const access = await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
       if (!access.ok) return;
-      const staffLimit = Number(access.company?.staff_limit ?? 1);
       if (!access.ok) return;
 
       const { data: sess } = await sb.auth.getSession();
@@ -230,7 +198,6 @@ async function loadSlots(nextDate?: string, nextStaffId?: string, nextMinutes?: 
           customerName: name,
           startISO: slotISO,
           durationMinutes: minutes,
-          staffId: staffId || undefined,
           serviceId: serviceId || undefined,
         }),
       });
@@ -374,29 +341,6 @@ async function loadSlots(nextDate?: string, nextStaffId?: string, nextMinutes?: 
 
 <div style={{ height: 12 }} />
 
-            <label style={{ fontSize: 13, fontWeight: 700 }}>Staff</label>
-            <select
-              style={{ ...inputStyle, marginTop: 6 }}
-              value={staffId}
-              onChange={(e) => {
-                const v = e.target.value;
-                setStaffId(v);
-                loadSlots(undefined, v, undefined);
-              }}
-              disabled={staff.length <= 1}
-            >
-              {staff.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-            <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-              {staff.length <= 1 ? "Apenas 1 staff ativo." : "Selecione quem fará o atendimento."}
-            </div>
-
-            <div style={{ height: 12 }} />
-
             <label style={{ fontSize: 13, fontWeight: 700 }}>Dia</label>
             <input
               type="date"
@@ -431,7 +375,7 @@ async function loadSlots(nextDate?: string, nextStaffId?: string, nextMinutes?: 
               style={{ ...inputStyle, marginTop: 6 }}
               value={slotISO}
               onChange={(e) => setSlotISO(e.target.value)}
-              disabled={!date || !staffId || loadingSlots}
+              disabled={!date || loadingSlots}
             >
               {loadingSlots ? (
                 <option value="">A carregar...</option>

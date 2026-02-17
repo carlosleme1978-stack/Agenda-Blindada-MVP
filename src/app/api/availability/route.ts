@@ -74,60 +74,11 @@ export async function GET(req: Request) {
 
     const userId = userRes.user.id;
 
-    const { data: prof } = await admin
-      .from("profiles")
-      .select("company_id,role,staff_id")
-      .eq("id", userId)
-      .single();
+    // ✅ MODELO SOLO: ignorar staff e company. O "tenant" é o próprio user.
+    const ownerId = userId;
+    const timeZone = "Europe/Lisbon";
 
-    const companyId = prof?.company_id as string | undefined;
-    if (!companyId) return NextResponse.json({ error: "Sem company" }, { status: 400 });
-
-    const role = String(prof?.role ?? "owner");
-    let staffId: string | null = null;
-
-    if (role === "staff") {
-      staffId = (prof?.staff_id as string | null) ?? null;
-      if (!staffId) return NextResponse.json({ error: "Staff sem staff_id no profile" }, { status: 400 });
-    } else {
-      staffId = staffIdParam || null;
-      if (!staffId) {
-        const { data: s } = await admin
-          .from("staff")
-          .select("id")
-          .eq("company_id", companyId)
-          .eq("active", true)
-          .order("created_at", { ascending: true })
-          .limit(1)
-          .maybeSingle();
-        staffId = s?.id ?? null;
-      }
-    }
-
-    if (!staffId) return NextResponse.json({ error: "Nenhum staff ativo encontrado" }, { status: 400 });
-
-    const { data: comp } = await admin.from("companies").select("timezone,plan,staff_limit").eq("id", companyId).single();
-    const timeZone = (comp?.timezone as string) || "Europe/Lisbon";
-
-    const staffLimit = Number((comp as any)?.staff_limit ?? 1);
-    const plan = String((comp as any)?.plan ?? "basic").toLowerCase();
-
-    const { data: srows } = await admin
-      .from("staff")
-      .select("id")
-      .eq("company_id", companyId)
-      .eq("active", true)
-      .order("created_at", { ascending: true });
-
-    const allowedStaffIds = (srows ?? []).map((x: any) => String(x.id)).slice(0, Math.max(1, staffLimit));
-
-    if (!allowedStaffIds.includes(staffId)) {
-      return NextResponse.json(
-        { error: `Limite de staff do plano ${plan.toUpperCase()} atingido. Atualize para PRO para usar mais staff.` },
-        { status: 402 }
-      );
-    }
-    // Business hours por staff (configurável)
+    // Business hours por dono (owner_working_hours)
 // day range in UTC for query (00:00 - 24:00 local tz)
     const dayStartUtc = zonedDateTimeToUtc(date, "00:00", timeZone);
     const dayEndUtc = zonedDateTimeToUtc(date, "23:59", timeZone);
@@ -139,10 +90,9 @@ export async function GET(req: Request) {
     const dayOfWeek = map[dow] ?? 1;
 
     const { data: wh } = await admin
-      .from("working_hours")
+      .from("owner_working_hours")
       .select("start_time,end_time,active")
-      .eq("company_id", companyId)
-      .eq("staff_id", staffId)
+      .eq("owner_id", ownerId)
       .eq("day_of_week", dayOfWeek)
       .maybeSingle();
 
@@ -150,22 +100,28 @@ export async function GET(req: Request) {
     const close = wh?.active === false ? null : (wh?.end_time as string) || "18:00";
 
     if (!open || !close) {
-      return NextResponse.json({ ok: true, date, staff_id: staffId, timeZone, slots: [] });
+      return NextResponse.json({ ok: true, date, timeZone, slots: [] });
     }
 
 
     const { data: appts, error: aErr } = await admin
       .from("appointments")
-      .select("start_time,end_time,status,service_duration_minutes_snapshot")
-      .eq("company_id", companyId)
-      .eq("staff_id", staffId)
-      .in("status", ["BOOKED", "CONFIRMED", "PENDING"])
+      .select("start_time,end_time,status,status_v2,service_duration_minutes_snapshot")
+      .eq("owner_id", ownerId)
       .lt("start_time", dayEndUtc.toISOString())
       .gt("end_time", dayStartUtc.toISOString());
 
     if (aErr) return NextResponse.json({ error: aErr.message }, { status: 400 });
 
+    const ACTIVE_V2 = new Set(["PENDING", "CONFIRMED"]);
+    const ACTIVE_LEGACY = new Set(["BOOKED", "CONFIRMED", "PENDING"]);
+
     const busy = (appts ?? [])
+      .filter((a: any) => {
+        const v2 = String(a.status_v2 ?? "");
+        const legacy = String(a.status ?? "");
+        return (v2 && ACTIVE_V2.has(v2)) || (legacy && ACTIVE_LEGACY.has(legacy));
+      })
       .map((a: any) => ({
         s: new Date(a.start_time).getTime(),
         e: (a.end_time ? new Date(a.end_time).getTime() : (new Date(a.start_time).getTime() + (Number((a as any).service_duration_minutes_snapshot ?? durationMinutes) * 60_000))),
@@ -201,7 +157,6 @@ export async function GET(req: Request) {
     return NextResponse.json({
       ok: true,
       date,
-      staff_id: staffId,
       timeZone,
       open,
       close,
