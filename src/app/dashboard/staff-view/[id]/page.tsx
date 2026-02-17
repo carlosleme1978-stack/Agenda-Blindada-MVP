@@ -46,7 +46,9 @@ function fmtTime(iso: string) {
 
 export default function StaffViewPage({ params }: { params: { id: string } }) {
   const supabase = useMemo(() => supabaseBrowser, []);
-  const staffId = params.id;
+  // params.id pode vir URL-encoded. Além disso, em alguns cenários o link pode acabar usando
+  // o "slug" (nome do staff) em vez do UUID. Fazemos decode + fallback por nome.
+  const staffId = decodeURIComponent((params as any)?.id ?? "");
 
   const [loading, setLoading] = useState(true);
   const [plan, setPlan] = useState<"basic" | "pro">("basic");
@@ -90,12 +92,25 @@ export default function StaffViewPage({ params }: { params: { id: string } }) {
         setPlan(planLocal as any);
 
         // staff belongs to company
-        const { data: st } = await supabase
+        // 1) tenta por id
+        let { data: st } = await supabase
           .from("staff")
           .select("id,name,company_id,active")
-          .eq("id", staffId)
           .eq("company_id", companyId)
+          .eq("id", staffId)
           .maybeSingle();
+
+        // 2) fallback: se não parecer UUID, tenta por nome
+        const looksUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(staffId);
+        if (!st && staffId && !looksUuid) {
+          const r2 = await supabase
+            .from("staff")
+            .select("id,name,company_id,active")
+            .eq("company_id", companyId)
+            .ilike("name", staffId)
+            .maybeSingle();
+          st = (r2 as any).data;
+        }
 
         if (!st) { 
           setError("Staff inválido ou não pertence à sua empresa.");
