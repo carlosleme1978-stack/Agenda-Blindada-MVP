@@ -46,7 +46,7 @@ export default async function Page() {
   const { data: staffRows } = await sb
     .from("staff")
     .select("id,name,active")
-    .eq("owner_id", uid)
+    .eq("company_id", cid)
     .eq("active", true)
     .order("name");
 
@@ -62,10 +62,10 @@ export default async function Page() {
   const baseSelect = "id,status_v2,start_time,end_time,staff_id,customer_id,service_price_cents_snapshot,is_no_show";
 
   const [{ data: todayRows }, { data: weekRows }, { data: monthRows }, { data: ap180 }] = await Promise.all([
-    sb.from("appointments").select(baseSelect).eq("owner_id", uid).gte("start_time", startToday).lte("start_time", endToday),
-    sb.from("appointments").select(baseSelect).eq("owner_id", uid).gte("start_time", startWeek).lte("start_time", endWeek),
-    sb.from("appointments").select("id,status_v2,start_time").eq("owner_id", uid).gte("start_time", start28).lte("start_time", endToday),
-    sb.from("appointments").select("customer_id,start_time,status_v2").eq("owner_id", uid).gte("start_time", start180).lte("start_time", endWeek).limit(5000),
+    sb.from("appointments").select(baseSelect).eq("company_id", cid).gte("start_time", startToday).lte("start_time", endToday),
+    sb.from("appointments").select(baseSelect).eq("company_id", cid).gte("start_time", startWeek).lte("start_time", endWeek),
+    sb.from("appointments").select("id,status_v2,start_time").eq("company_id", cid).gte("start_time", start28).lte("start_time", endToday),
+    sb.from("appointments").select("customer_id,start_time,status_v2").eq("company_id", cid).gte("start_time", start180).lte("start_time", endWeek).limit(5000),
   ]);
 
   const today = (todayRows ?? []) as any[];
@@ -158,7 +158,7 @@ export default async function Page() {
     { label: "Clientes inativos (+30d)", value: String(inactive), tone: inactive >= 10 ? "danger" : inactive >= 5 ? "warn" : "ok", href: "/dashboard/crm" },
     { label: "Risco (cancel/no-show)", value: String(risky), tone: risky >= 6 ? "danger" : risky >= 3 ? "warn" : "ok", href: "/dashboard/agenda" },
     { label: "Dia mais fraco (28d)", value: `${minDay.day} (${minDay.count})`, tone: minDay.count <= 2 ? "warn" : "info" },
-    { label: "Staff destaque (7d)", value: topStaff ? `${topStaff.name} • ${Math.round(topStaff.revenueCents / 100)}€` : "—", tone: topStaff ? "info" : "ok", href: "/dashboard/staff" },
+    { label: "Staff destaque (7d)", value: topStaff ? `${topStaff.name} • ${Math.round(topStaff.revenueCents / 100)}€` : "—", tone: topStaff ? "info" : "ok", href: "/dashboard/agenda" },
   ] as const;
 
   // Views (Finance + Insights)
@@ -170,12 +170,12 @@ export default async function Page() {
     { data: weekdayRows },
     { data: hourRows },
   ] = await Promise.all([
-    sb.from("v_company_financial_metrics").select("*").eq("owner_id", uid).maybeSingle(),
-    sb.from("v_staff_financial_metrics").select("*").eq("owner_id", uid),
-    sb.from("v_staff_occupancy").select("*").eq("owner_id", uid),
-    sb.from("v_top_services").select("service_id,service_name,revenue_cents,total_completed").eq("owner_id", uid).order("revenue_cents", { ascending: false }).limit(1),
-    sb.from("v_weekday_performance").select("weekday,revenue_cents,total_completed").eq("owner_id", uid).order("revenue_cents", { ascending: false }).limit(1),
-    sb.from("v_hourly_performance").select("hour,total_completed").eq("owner_id", uid).order("total_completed", { ascending: true }).limit(1),
+    sb.from("v_company_financial_metrics").select("*").eq("company_id", cid).maybeSingle(),
+    sb.from("v_staff_financial_metrics").select("*").eq("company_id", cid),
+    sb.from("v_staff_occupancy").select("*").eq("company_id", cid),
+    sb.from("v_top_services").select("service_id,service_name,revenue_cents,total_completed").eq("company_id", cid).order("revenue_cents", { ascending: false }).limit(1),
+    sb.from("v_weekday_performance").select("weekday,revenue_cents,total_completed").eq("company_id", cid).order("revenue_cents", { ascending: false }).limit(1),
+    sb.from("v_hourly_performance").select("hour,total_completed").eq("company_id", cid).order("total_completed", { ascending: true }).limit(1),
   ]);
 
   const initialData = {

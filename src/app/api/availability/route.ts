@@ -59,6 +59,7 @@ export async function GET(req: Request) {
 
     const url = new URL(req.url);
     const date = String(url.searchParams.get("date") || "").trim(); // YYYY-MM-DD
+    // Modelo Solo: staff_id opcional (ignorado)
     const staffIdParam = String(url.searchParams.get("staff_id") || "").trim();
     const durationMinutes = Math.max(5, Number(url.searchParams.get("duration") || 30));
     const stepMinutes = Math.max(5, Number(url.searchParams.get("step") || 15));
@@ -94,7 +95,7 @@ export async function GET(req: Request) {
         const { data: s } = await admin
           .from("staff")
           .select("id")
-          .eq("owner_id", uid)
+          .eq("company_id", companyId)
           .eq("active", true)
           .order("created_at", { ascending: true })
           .limit(1)
@@ -114,7 +115,7 @@ export async function GET(req: Request) {
     const { data: srows } = await admin
       .from("staff")
       .select("id")
-      .eq("owner_id", uid)
+      .eq("company_id", companyId)
       .eq("active", true)
       .order("created_at", { ascending: true });
 
@@ -138,9 +139,9 @@ export async function GET(req: Request) {
     const dayOfWeek = map[dow] ?? 1;
 
     const { data: wh } = await admin
-      .from("staff_working_hours")
+      .from("working_hours")
       .select("start_time,end_time,active")
-      .eq("owner_id", uid)
+      .eq("company_id", companyId)
       .eq("staff_id", staffId)
       .eq("day_of_week", dayOfWeek)
       .maybeSingle();
@@ -156,7 +157,7 @@ export async function GET(req: Request) {
     const { data: appts, error: aErr } = await admin
       .from("appointments")
       .select("start_time,end_time,status,service_duration_minutes_snapshot")
-      .eq("owner_id", uid)
+      .eq("company_id", companyId)
       .eq("staff_id", staffId)
       .in("status", ["BOOKED", "CONFIRMED", "PENDING"])
       .lt("start_time", dayEndUtc.toISOString())

@@ -473,11 +473,6 @@ export async function POST(req: NextRequest) {
 
   const companyId = resolvedCompanyId;
 
-  // derive uid (owner id) used in queries; prefer companies.owner_id but fall back to companyId
-  // this fixes "Cannot find name 'uid'" by ensuring uid is defined.
-  const { data: _companyOwnerRow } = await db.from("companies").select("owner_id").eq("id", companyId).maybeSingle();
-  const uid: string = (_companyOwnerRow as any)?.owner_id ?? companyId;
-
   // ─────────────────────────────────────────────
   // ✅ Nome do cliente (primeira vez)
   // ─────────────────────────────────────────────
@@ -492,7 +487,7 @@ export async function POST(req: NextRequest) {
   const { data: session0 } = await db
     .from("chat_sessions")
     .select("state, context")
-    .eq("owner_id", uid)
+    .eq("company_id", companyId)
     .eq("customer_id", customer.id)
     .maybeSingle();
 
@@ -534,7 +529,7 @@ export async function POST(req: NextRequest) {
         context: nextCtx ?? {},
         updated_at: new Date().toISOString(),
       })
-      .eq("owner_id", uid)
+      .eq("company_id", companyId)
       .eq("customer_id", customer.id)
       .select("company_id");
 
@@ -656,7 +651,7 @@ export async function POST(req: NextRequest) {
   const { data: staffRows } = await db
     .from("staff")
     .select("id,name,active,created_at")
-    .eq("owner_id", uid)
+    .eq("company_id", companyId)
     .eq("active", true)
     .order("created_at", { ascending: true });
 
@@ -679,12 +674,12 @@ export async function POST(req: NextRequest) {
     let q = db
       .from("appointments")
       .select("*", { count: "exact", head: true })
-      .eq("owner_id", uid)
+      .eq("company_id", companyId)
       .gte("start_time", dayStart)
       .lte("start_time", dayEnd)
       .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)");
 
-    if (staffId) q = (q as any).eq("staff_id", staffId);
+    if (staffId) q = (q as any)// solo: sem staff_id
 
     const { count, error } = await (q as any);
 
@@ -697,12 +692,12 @@ export async function POST(req: NextRequest) {
     let q = db
       .from("appointments")
       .select("*", { count: "exact", head: true })
-      .eq("owner_id", uid)
+      .eq("company_id", companyId)
       .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
       .lt("start_time", endISO)
       .gt("end_time", startISO);
 
-    if (staffId) q = (q as any).eq("staff_id", staffId);
+    if (staffId) q = (q as any)// solo: sem staff_id
 
     const { count, error } = await (q as any);
 
@@ -717,7 +712,7 @@ export async function POST(req: NextRequest) {
     const { data: cats, error } = await db
       .from("service_categories")
       .select("id,name,sort_order,active,created_at")
-      .eq("owner_id", uid)
+      .eq("company_id", companyId)
       .eq("active", true)
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: true });
@@ -758,7 +753,7 @@ export async function POST(req: NextRequest) {
   }
 
   async function sendStaffMenu(nextCtx: any, header?: string) {
-    const list = (ACTIVE_STAFF ?? []).slice(0, 9);
+    const list = ([] as any[]).slice(0, 9); // solo: sem seleção de staff
     if (!list.length) {
       // fallback: segue sem staff
       await setSession("ASK_DAY", nextCtx);
@@ -766,6 +761,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+
+    // Modelo Solo: se houver apenas 1 atendente, não perguntar (evita etapa extra)
+    if (list.length === 1) {
+      const only = list[0];
+      const autoCtx = { ...nextCtx, staff_id: only.id, staff_name: only.name };
+      await setSession("ASK_DAY", autoCtx);
+      await replyAndLog((header ? header + "\n\n" : "") + "Qual dia você prefere? (ex: hoje / amanhã / 15/02)", { step: "ask_day_auto_staff" });
+      return NextResponse.json({ ok: true });
+    }
     const lines = list.map((s: any, i: number) => `${i + 1}) ${s.name}`).join("\n");
     const text =
       (header ? header + "\n\n" : "") +
@@ -780,7 +784,7 @@ export async function POST(req: NextRequest) {
     const { data: services, error } = await db
       .from("services")
       .select("id,name,duration_minutes,price_cents,sort_order,active,category_id,created_at")
-      .eq("owner_id", uid)
+      .eq("company_id", companyId)
       .eq("active", true)
       .eq("category_id", categoryId)
       .order("sort_order", { ascending: true })
@@ -844,7 +848,7 @@ export async function POST(req: NextRequest) {
     const { data: appt } = await db
       .from("appointments")
       .select("id,start_time,status")
-      .eq("owner_id", uid)
+      .eq("company_id", companyId)
       .eq("customer_id", customer.id)
       .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
       .gte("start_time", new Date().toISOString())
@@ -974,7 +978,7 @@ export async function POST(req: NextRequest) {
     const { data: dayAppts } = await db
       .from("appointments")
       .select("start_time,end_time,status,status_v2")
-      .eq("owner_id", uid)
+      .eq("company_id", companyId)
       .gte("start_time", dayStart)
       .lte("start_time", dayEnd)
       .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)");
@@ -1027,7 +1031,7 @@ export async function POST(req: NextRequest) {
     const { data: nextAppt } = await db
       .from("appointments")
       .select("id,status,start_time")
-      .eq("owner_id", uid)
+      .eq("company_id", companyId)
       .eq("customer_id", customer.id)
       .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
       .gte("start_time", new Date().toISOString())
@@ -1089,7 +1093,7 @@ export async function POST(req: NextRequest) {
       const r = await (db as any)
         .from("appointments")
         .select("id,status,status_v2")
-        .eq("owner_id", uid)
+        .eq("company_id", companyId)
         .eq("customer_id", customer.id)
         .or("status_v2.eq.PENDING,status.eq.BOOKED")
         .order("created_at", { ascending: false })

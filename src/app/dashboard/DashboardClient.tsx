@@ -168,7 +168,7 @@ export default function DashboardClient({ initial }: { initial: DashboardInitial
               <Link href="/dashboard/crm" style={{ textDecoration: "none", fontWeight: 900, color: "white", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.20)" }}>
                 CRM
               </Link>
-              <Link href="/dashboard/staff" style={{ textDecoration: "none", fontWeight: 900, color: "white", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.20)" }}>
+              <Link href="/dashboard/settings" style={{ textDecoration: "none", fontWeight: 900, color: "white", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.20)" }}>
                 Staff
               </Link>
             </div>

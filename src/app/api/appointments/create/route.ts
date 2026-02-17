@@ -61,7 +61,7 @@ export async function POST(req: Request) {
     const { data: staffRows } = await admin
       .from("staff")
       .select("id")
-      .eq("owner_id", uid)
+      .eq("company_id", companyId)
       .eq("active", true)
       .order("created_at", { ascending: true });
 
@@ -109,7 +109,7 @@ export async function POST(req: Request) {
     const { data: clashRows, error: clashErr } = await admin
       .from("appointments")
       .select("id,start_time,end_time,status")
-      .eq("owner_id", uid)
+      .eq("company_id", companyId)
       .eq("staff_id", staffId)
       .in("status", ["BOOKED", "CONFIRMED", "PENDING"])
       .lt("start_time", end.toISOString())
@@ -151,7 +151,7 @@ export async function POST(req: Request) {
       const { data: sv } = await admin
         .from("services")
         .select("id")
-        .eq("owner_id", uid)
+        .eq("company_id", companyId)
         .eq("active", true)
         .order("created_at", { ascending: true })
         .limit(1)

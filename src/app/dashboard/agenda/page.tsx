@@ -56,7 +56,7 @@ export default function AgendaPage() {
       const { data, error } = await supabase
         .from("appointments")
         .select("id,start_time,end_time,status,customer_name_snapshot,customers(name,phone)")
-        .eq("owner_id", uid)
+        .eq("company_id", companyId)
         .gte("start_time", from.toISOString())
         .lte("start_time", to.toISOString())
         .order("start_time", { ascending: true })

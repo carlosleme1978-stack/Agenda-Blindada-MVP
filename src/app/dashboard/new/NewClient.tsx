@@ -6,8 +6,6 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ensureAccess } from "@/lib/access";
 
-type StaffOpt = { id: string; name: string };
-
 export default function NewClient() {
   const r = useRouter();
 
@@ -17,8 +15,11 @@ export default function NewClient() {
   const [date, setDate] = useState(""); // YYYY-MM-DD
   const [minutes, setMinutes] = useState(30);
 
-  const [staff, setStaff] = useState<StaffOpt[]>([]);
-  const [staffId, setStaffId] = useState<string>("");
+  // Modelo Solo: sem staff (1 dono)
+  const staffId = "";
+  const setStaff: any = () => {};
+  const setStaffId: any = () => {};
+
 
   const [slots, setSlots] = useState<{ label: string; startISO: string }[]>([]);
   const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);

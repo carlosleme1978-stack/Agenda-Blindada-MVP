@@ -39,13 +39,13 @@ export default function CRMCustomerPage() {
         return;
       }
 
-      const { data: c } = await sb.from("customers").select("id,name,phone,created_at").eq("id", id).eq("owner_id", uid).maybeSingle();
+      const { data: c } = await sb.from("customers").select("id,name,phone,created_at").eq("id", id).eq("company_id", cid).maybeSingle();
       setCustomer((c as any) ?? null);
 
       const { data: rows } = await sb
         .from("appointments")
         .select("id,start_time,status,service_name_snapshot,service_price_cents_snapshot")
-        .eq("owner_id", uid)
+        .eq("company_id", cid)
         .eq("customer_id", id)
         .order("start_time", { ascending: false })
         .limit(200);

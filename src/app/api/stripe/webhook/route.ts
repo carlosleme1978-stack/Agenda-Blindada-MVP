@@ -132,7 +132,7 @@ export async function POST(req: Request) {
               staff_limit: 5,
               updated_at: new Date().toISOString(),
             })
-            .eq("owner_id", uid);
+            .eq("company_id", companyId);
         }
         break;
       }
@@ -231,7 +231,7 @@ export async function POST(req: Request) {
             cancel_at_period_end: cancelAtPeriodEnd,
             updated_at: new Date().toISOString(),
           })
-          .eq("owner_id", uid);
+          .eq("company_id", companyId);
 
         break;
       }
@@ -255,7 +255,7 @@ export async function POST(req: Request) {
             staff_limit: 0,
             updated_at: new Date().toISOString(),
           })
-          .eq("owner_id", uid);
+          .eq("company_id", companyId);
 
         break;
       }
