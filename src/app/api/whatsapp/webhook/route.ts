@@ -1096,7 +1096,7 @@ export async function POST(req: NextRequest) {
     if (!appt) return NextResponse.json({ ok: true });
 
     const newStatus = yn === "SIM" ? "CONFIRMED" : "CANCELLED";
-    await db.from("appointments").update({ status: newStatus, status_v2: newStatus === "BOOKED" ? "PENDING" : newStatus }).eq("id", appt.id);
+    await db.from("appointments").update({ status: newStatus, status_v2: newStatus }).eq("id", appt.id);
 
     const reply =
       yn === "SIM"
@@ -1280,7 +1280,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    const picks = uniqueNums.map((k) => services[k - 1]).filter((x) => x?.id);
+const picks = uniqueNums.map((k) => services[k - 1]).filter((x) => x?.id);
 if (!picks.length) {
   await replyAndLog("Esse serviço não está disponível. Escolhe um número da lista 😊", { step: "service_invalid" });
   return NextResponse.json({ ok: true });
@@ -1300,13 +1300,6 @@ const nextCtx = {
   price_cents_total: totalCents,
   offset: 0,
 };
-    const nextCtx = {
-      ...ctx,
-      service_id: svc.id,
-      service_name: svc.name,
-      duration_minutes: svc.duration_minutes,
-      offset: 0,
-    };
 
     if (COMPANY_PLAN === "pro" && (ACTIVE_STAFF?.length ?? 0) > 1) {
       return await sendStaffMenu(nextCtx);
