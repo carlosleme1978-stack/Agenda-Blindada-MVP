@@ -756,7 +756,7 @@ export async function POST(req: NextRequest) {
     const list = (ACTIVE_STAFF ?? []).slice(0, 9);
     if (!list.length) {
       // fallback: segue sem staff
-      await setSession("ASK_DAY", nextCtx2);
+      await setSession("ASK_DAY", nextCtx);
       await replyAndLog("Qual dia você prefere? (ex: hoje / amanhã / 15/02)", { step: "ask_day_fallback_no_staff" });
       return NextResponse.json({ ok: true });
     }
@@ -1341,7 +1341,7 @@ const nextCtx2 = {
       return await sendStaffMenu(nextCtx2);
     }
 
-    await setSession("ASK_DAY", nextCtx);
+    await setSession("ASK_DAY", nextCtx2);
 
     const price = formatPriceEur(nextCtx2.price_cents_total ?? 0);
     const pricePart = price ? ` (${price})` : "";
