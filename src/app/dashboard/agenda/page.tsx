@@ -12,6 +12,18 @@ type Row = {
   status_v2?: string | null;
   customer_name_snapshot: string | null;
   customers?: { name: string | null; phone: string | null } | null;
+  service_name_snapshot?: string | null;
+  service_duration_minutes_snapshot?: number | null;
+  service_price_cents_snapshot?: number | null;
+  service_currency_snapshot?: string | null;
+  appointment_services?:
+    | {
+        service_name_snapshot: string | null;
+        duration_minutes_snapshot: number | null;
+        price_cents_snapshot: number | null;
+        currency_snapshot: string | null;
+      }[]
+    | null;
 };
 
 function pill(status: string) {
@@ -58,6 +70,7 @@ export default function AgendaPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [open, setOpen] = useState<Row | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -78,7 +91,9 @@ export default function AgendaPage() {
 
       const { data, error } = await supabase
         .from("appointments")
-        .select("id,start_time,end_time,status,status_v2,customer_name_snapshot,customers(name,phone)")
+        .select(
+          "id,start_time,end_time,status,status_v2,customer_name_snapshot,customers(name,phone),service_name_snapshot,service_duration_minutes_snapshot,service_price_cents_snapshot,service_currency_snapshot,appointment_services(service_name_snapshot,duration_minutes_snapshot,price_cents_snapshot,currency_snapshot)"
+        )
         .eq("owner_id", ownerId)
         .gte("start_time", from.toISOString())
         .lte("start_time", to.toISOString())
@@ -161,12 +176,33 @@ export default function AgendaPage() {
                     list.map((r) => {
                       const s = pill(String(r.status_v2 ?? r.status));
                       const canCancel = !["CANCELLED"].includes(String(r.status_v2 ?? r.status).toUpperCase());
+                      const custName = r.customer_name_snapshot ?? r.customers?.name ?? "—";
                       return (
                         <div key={r.id} className="ab-row" style={{ display: "grid", gridTemplateColumns: "220px 1fr 160px 140px", gap: 12, padding: "12px 14px" }}>
                           <div style={{ fontWeight: 950 }} className={isToday ? "ab-pulse-green" : ""}>
                             {fmt(r.start_time)}
                           </div>
-                          <div style={{ fontWeight: 850 }}>{r.customer_name_snapshot ?? r.customers?.name ?? "—"}</div>
+                          <div>
+                            <button
+                              className="ab-btn"
+                              onClick={() => setOpen(r)}
+                              style={{
+                                padding: 0,
+                                border: 0,
+                                background: "transparent",
+                                fontWeight: 950,
+                                textAlign: "left",
+                                cursor: "pointer",
+                                color: "rgba(255,255,255,0.92)",
+                              }}
+                              title="Ver detalhes"
+                            >
+                              {custName}
+                            </button>
+                            <div className="ab-muted" style={{ fontSize: 12 }}>
+                              {r.customers?.phone ? r.customers.phone : ""}
+                            </div>
+                          </div>
                           <div>
                             <span className="ab-pill" style={{ background: s.bg, border: `1px solid ${s.bd}`, color: "rgba(255,255,255,0.92)" }}>
                               {s.label}
@@ -211,6 +247,103 @@ export default function AgendaPage() {
           })}
         </div>
       )}
+
+      {/* Modal de detalhes */}
+      {open ? (
+        <div
+          onClick={() => setOpen(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            display: "grid",
+            placeItems: "center",
+            padding: 16,
+            zIndex: 60,
+          }}
+        >
+          <div
+            className="ab-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(720px, 96vw)", overflow: "hidden" }}
+          >
+            <div className="ab-card-inner" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900 }}>Detalhes da marcação</div>
+                <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: -0.2 }}>
+                  {open.customer_name_snapshot ?? open.customers?.name ?? "—"}
+                </div>
+                {open.customers?.phone ? <div className="ab-muted" style={{ marginTop: 4 }}>{open.customers.phone}</div> : null}
+              </div>
+
+              <button className="ab-btn" onClick={() => setOpen(null)} style={{ padding: "8px 10px" }}>
+                Fechar
+              </button>
+            </div>
+
+            <div className="ab-table" style={{ borderLeft: 0, borderRight: 0, borderBottom: 0, borderRadius: 0 }}>
+              <div style={{ padding: 14, display: "grid", gap: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 10, alignItems: "baseline" }}>
+                  <div className="ab-muted" style={{ fontSize: 12, fontWeight: 900 }}>Quando</div>
+                  <div style={{ fontWeight: 950 }}>{fmt(open.start_time)}</div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 10, alignItems: "baseline" }}>
+                  <div className="ab-muted" style={{ fontSize: 12, fontWeight: 900 }}>Status</div>
+                  <div style={{ fontWeight: 900 }}>{String(open.status_v2 ?? open.status).toUpperCase()}</div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 10, alignItems: "baseline" }}>
+                  <div className="ab-muted" style={{ fontSize: 12, fontWeight: 900 }}>Serviços</div>
+                  <div>
+                    {(() => {
+                      const items = (open.appointment_services ?? []).filter(Boolean);
+                      const single = open.service_name_snapshot
+                        ? [
+                            {
+                              service_name_snapshot: open.service_name_snapshot,
+                              duration_minutes_snapshot: open.service_duration_minutes_snapshot ?? null,
+                              price_cents_snapshot: open.service_price_cents_snapshot ?? null,
+                              currency_snapshot: open.service_currency_snapshot ?? "EUR",
+                            },
+                          ]
+                        : [];
+                      const list = items.length ? items : single;
+                      if (!list.length) return <span className="ab-muted">—</span>;
+
+                      const totalMin = list.reduce((a, x: any) => a + Number(x.duration_minutes_snapshot ?? 0), 0);
+                      const totalCents = list.reduce((a, x: any) => a + Number(x.price_cents_snapshot ?? 0), 0);
+                      const currency = String((list[0] as any).currency_snapshot ?? "EUR");
+                      const money = (c: number) => (c / 100).toFixed(2).replace(".", ",");
+
+                      return (
+                        <div style={{ display: "grid", gap: 8 }}>
+                          <div style={{ display: "grid", gap: 6 }}>
+                            {list.map((x: any, i: number) => (
+                              <div key={i} className="ab-row" style={{ padding: "10px 12px", borderRadius: 12, display: "flex", justifyContent: "space-between", gap: 12 }}>
+                                <div style={{ fontWeight: 950 }}>{x.service_name_snapshot || "—"}</div>
+                                <div className="ab-muted" style={{ fontWeight: 900, whiteSpace: "nowrap" }}>
+                                  {Number(x.duration_minutes_snapshot ?? 0) ? `${Number(x.duration_minutes_snapshot)}min` : ""}
+                                  {Number(x.price_cents_snapshot ?? 0) ? ` · ${money(Number(x.price_cents_snapshot))} ${currency}` : ""}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="ab-muted" style={{ fontSize: 12, fontWeight: 900 }}>
+                            Total: {totalMin ? `${totalMin}min` : "—"}
+                            {totalCents ? ` · ${money(totalCents)} ${currency}` : ""}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
