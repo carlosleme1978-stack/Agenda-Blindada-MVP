@@ -16,14 +16,13 @@ type Row = {
   service_duration_minutes_snapshot?: number | null;
   service_price_cents_snapshot?: number | null;
   service_currency_snapshot?: string | null;
-  appointment_services?:
-    | {
-        service_name_snapshot: string | null;
-        duration_minutes_snapshot: number | null;
-        price_cents_snapshot: number | null;
-        currency_snapshot: string | null;
-      }[]
-    | null;
+};
+
+type ServiceLine = {
+  service_name_snapshot: string | null;
+  duration_minutes_snapshot: number | null;
+  price_cents_snapshot: number | null;
+  currency_snapshot: string | null;
 };
 
 function pill(status: string) {
@@ -71,6 +70,8 @@ export default function AgendaPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState<Row | null>(null);
+  const [openServices, setOpenServices] = useState<ServiceLine[] | null>(null);
+  const [openLoading, setOpenLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -89,10 +90,12 @@ export default function AgendaPage() {
       const to = new Date();
       to.setDate(to.getDate() + 14);
 
+      // IMPORTANTE: não usar relações embutidas que dependem de FK no PostgREST (pode quebrar e "sumir" a agenda).
+      // A lista é carregada somente do appointments; detalhes (serviços) são carregados sob demanda ao clicar.
       const { data, error } = await supabase
         .from("appointments")
         .select(
-          "id,start_time,end_time,status,status_v2,customer_name_snapshot,customers(name,phone),service_name_snapshot,service_duration_minutes_snapshot,service_price_cents_snapshot,service_currency_snapshot,appointment_services(service_name_snapshot,duration_minutes_snapshot,price_cents_snapshot,currency_snapshot)"
+          "id,start_time,end_time,status,status_v2,customer_name_snapshot,customers(name,phone),service_name_snapshot,service_duration_minutes_snapshot,service_price_cents_snapshot,service_currency_snapshot"
         )
         .eq("owner_id", ownerId)
         .gte("start_time", from.toISOString())
@@ -100,11 +103,46 @@ export default function AgendaPage() {
         .order("start_time", { ascending: true })
         .limit(500);
 
-      if (error) setErr("Não consegui carregar marcações.");
+      if (error) {
+        console.error("Agenda load error:", error);
+        setErr("Não consegui carregar marcações.");
+      }
       setRows((data ?? []) as any);
       setLoading(false);
     })();
   }, []);
+
+  useEffect(() => {
+    (async () => {
+      if (!open) {
+        setOpenServices(null);
+        setOpenLoading(false);
+        return;
+      }
+      setOpenLoading(true);
+      setOpenServices(null);
+      // Carrega itens (serviços) sob demanda. Se a tabela/permite não existir, cai no fallback (snapshots).
+      try {
+        const { data, error } = await supabase
+          .from("appointment_services")
+          .select("service_name_snapshot,duration_minutes_snapshot,price_cents_snapshot,currency_snapshot")
+          .eq("appointment_id", open.id)
+          .order("created_at", { ascending: true });
+
+        if (error) {
+          console.warn("appointment_services load failed (fallback to snapshots):", error);
+          setOpenServices([]);
+        } else {
+          setOpenServices((data ?? []) as any);
+        }
+      } catch (e) {
+        console.warn("appointment_services load threw (fallback to snapshots):", e);
+        setOpenServices([]);
+      } finally {
+        setOpenLoading(false);
+      }
+    })();
+  }, [open, supabase]);
 
   const grouped = useMemo(() => {
     const m = new Map<string, Row[]>();
@@ -176,7 +214,6 @@ export default function AgendaPage() {
                     list.map((r) => {
                       const s = pill(String(r.status_v2 ?? r.status));
                       const canCancel = !["CANCELLED"].includes(String(r.status_v2 ?? r.status).toUpperCase());
-                      const custName = r.customer_name_snapshot ?? r.customers?.name ?? "—";
                       return (
                         <div key={r.id} className="ab-row" style={{ display: "grid", gridTemplateColumns: "220px 1fr 160px 140px", gap: 12, padding: "12px 14px" }}>
                           <div style={{ fontWeight: 950 }} className={isToday ? "ab-pulse-green" : ""}>
@@ -197,7 +234,7 @@ export default function AgendaPage() {
                               }}
                               title="Ver detalhes"
                             >
-                              {custName}
+                              {r.customer_name_snapshot ?? r.customers?.name ?? "—"}
                             </button>
                             <div className="ab-muted" style={{ fontSize: 12 }}>
                               {r.customers?.phone ? r.customers.phone : ""}
@@ -248,7 +285,7 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* Modal de detalhes */}
+      {/* Modal de detalhes (clicar no cliente) */}
       {open ? (
         <div
           onClick={() => setOpen(null)}
@@ -262,17 +299,11 @@ export default function AgendaPage() {
             zIndex: 60,
           }}
         >
-          <div
-            className="ab-card"
-            onClick={(e) => e.stopPropagation()}
-            style={{ width: "min(720px, 96vw)", overflow: "hidden" }}
-          >
+          <div className="ab-card" onClick={(e) => e.stopPropagation()} style={{ width: "min(720px, 96vw)", overflow: "hidden" }}>
             <div className="ab-card-inner" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
               <div>
                 <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900 }}>Detalhes da marcação</div>
-                <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: -0.2 }}>
-                  {open.customer_name_snapshot ?? open.customers?.name ?? "—"}
-                </div>
+                <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: -0.2 }}>{open.customer_name_snapshot ?? open.customers?.name ?? "—"}</div>
                 {open.customers?.phone ? <div className="ab-muted" style={{ marginTop: 4 }}>{open.customers.phone}</div> : null}
               </div>
 
@@ -296,30 +327,32 @@ export default function AgendaPage() {
                 <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 10, alignItems: "baseline" }}>
                   <div className="ab-muted" style={{ fontSize: 12, fontWeight: 900 }}>Serviços</div>
                   <div>
-                    {(() => {
-                      const items = (open.appointment_services ?? []).filter(Boolean);
-                      const single = open.service_name_snapshot
+                    {openLoading ? (
+                      <span className="ab-muted">Carregando…</span>
+                    ) : (() => {
+                      const list = (openServices ?? []).filter(Boolean);
+                      const fallback = open.service_name_snapshot
                         ? [
                             {
                               service_name_snapshot: open.service_name_snapshot,
                               duration_minutes_snapshot: open.service_duration_minutes_snapshot ?? null,
                               price_cents_snapshot: open.service_price_cents_snapshot ?? null,
                               currency_snapshot: open.service_currency_snapshot ?? "EUR",
-                            },
+                            } as ServiceLine,
                           ]
                         : [];
-                      const list = items.length ? items : single;
-                      if (!list.length) return <span className="ab-muted">—</span>;
+                      const final = list.length ? list : fallback;
+                      if (!final.length) return <span className="ab-muted">—</span>;
 
-                      const totalMin = list.reduce((a, x: any) => a + Number(x.duration_minutes_snapshot ?? 0), 0);
-                      const totalCents = list.reduce((a, x: any) => a + Number(x.price_cents_snapshot ?? 0), 0);
-                      const currency = String((list[0] as any).currency_snapshot ?? "EUR");
+                      const totalMin = final.reduce((a, x: any) => a + Number(x.duration_minutes_snapshot ?? 0), 0);
+                      const totalCents = final.reduce((a, x: any) => a + Number(x.price_cents_snapshot ?? 0), 0);
+                      const currency = String((final[0] as any).currency_snapshot ?? "EUR");
                       const money = (c: number) => (c / 100).toFixed(2).replace(".", ",");
 
                       return (
                         <div style={{ display: "grid", gap: 8 }}>
                           <div style={{ display: "grid", gap: 6 }}>
-                            {list.map((x: any, i: number) => (
+                            {final.map((x: any, i: number) => (
                               <div key={i} className="ab-row" style={{ padding: "10px 12px", borderRadius: 12, display: "flex", justifyContent: "space-between", gap: 12 }}>
                                 <div style={{ fontWeight: 950 }}>{x.service_name_snapshot || "—"}</div>
                                 <div className="ab-muted" style={{ fontWeight: 900, whiteSpace: "nowrap" }}>
