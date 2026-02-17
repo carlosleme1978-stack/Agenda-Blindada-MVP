@@ -57,34 +57,37 @@ export default function ServicesClient() {
     width: "100%",
     padding: "12px 12px",
     borderRadius: 12,
-    border: "1px solid rgba(2, 6, 23, 0.12)",
+    border: "1px solid var(--input-border)",
     outline: "none",
     fontSize: 14,
-    background: "rgba(255,255,255,0.95)",
+    background: "var(--input-bg)",
+    color: "var(--text)",
   };
 
   const btn: React.CSSProperties = {
     padding: "10px 12px",
     borderRadius: 12,
-    border: "1px solid rgba(2, 6, 23, 0.10)",
+    border: "1px solid var(--btn-border)",
     cursor: "pointer",
     fontWeight: 900,
     letterSpacing: -0.2,
-    background: "rgba(255,255,255,0.85)",
+    background: "var(--btn-bg)",
+    color: "var(--btn-fg)",
   };
 
   const btnActive: React.CSSProperties = {
     ...btn,
-    background: "rgba(15, 23, 42, 0.95)",
-    color: "white",
-    border: "1px solid rgba(15, 23, 42, 0.95)",
+    background: "var(--primary-gradient)",
+    color: "rgba(255,255,255,0.94)",
+    border: "1px solid rgba(255,255,255,0.18)",
   };
 
   const card: React.CSSProperties = {
-    background: "rgba(255,255,255,0.86)",
-    border: "1px solid rgba(0,0,0,0.06)",
+    background: "var(--card-bg)",
+    border: "1px solid var(--card-border)",
     borderRadius: 20,
-    boxShadow: "0 30px 60px rgba(15, 23, 42, 0.08), 0 8px 18px rgba(15, 23, 42, 0.05)",
+    boxShadow: "var(--shadow)",
+    backdropFilter: "blur(10px)",
     padding: 18,
     maxWidth: 980,
     margin: "0 auto",
@@ -395,10 +398,10 @@ export default function ServicesClient() {
         </div>
 
         <div style={{ display: "flex", gap: 10 }}>
-          <Link href="/dashboard" style={{ ...btn, textDecoration: "none", color: "#0f172a" }}>
+          <Link href="/dashboard" style={{ ...btn, textDecoration: "none" }}>
             Voltar
           </Link>
-          <Link href="/dashboard/settings" style={{ ...btn, textDecoration: "none", color: "#0f172a" }}>
+          <Link href="/dashboard/settings" style={{ ...btn, textDecoration: "none" }}>
             Horários
           </Link>
         </div>

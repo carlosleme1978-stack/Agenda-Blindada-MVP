@@ -131,8 +131,9 @@ export default function CRMClient() {
               fontWeight: 900,
               padding: "8px 12px",
               borderRadius: 999,
-              border: "1px solid rgba(2,6,23,0.10)",
-              background: tab === "all" ? "rgba(2,6,23,0.06)" : "white",
+              border: "1px solid var(--btn-border)",
+              background: tab === "all" ? "rgba(59,130,246,0.16)" : "var(--btn-bg)",
+              color: "var(--btn-fg)",
             }}
           >
             Todos
@@ -144,8 +145,9 @@ export default function CRMClient() {
               fontWeight: 900,
               padding: "8px 12px",
               borderRadius: 999,
-              border: "1px solid rgba(2,6,23,0.10)",
-              background: tab === "inactive" ? "rgba(2,6,23,0.06)" : "white",
+              border: "1px solid var(--btn-border)",
+              background: tab === "inactive" ? "rgba(245,158,11,0.18)" : "var(--btn-bg)",
+              color: "var(--btn-fg)",
             }}
           >
             Inativos (30d+)
@@ -157,16 +159,17 @@ export default function CRMClient() {
               fontWeight: 900,
               padding: "8px 12px",
               borderRadius: 999,
-              border: "1px solid rgba(2,6,23,0.10)",
-              background: tab === "risk" ? "rgba(2,6,23,0.06)" : "white",
+              border: "1px solid var(--btn-border)",
+              background: tab === "risk" ? "rgba(239,68,68,0.18)" : "var(--btn-bg)",
+              color: "var(--btn-fg)",
             }}
           >
             Risco (2+ cancel.)
           </Link>
         </div>
 
-        <div style={{ marginTop: 14, borderRadius: 18, border: "1px solid rgba(2,6,23,0.10)", background: "rgba(255,255,255,0.92)", overflow: "hidden" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 140px 120px", gap: 12, padding: "12px 14px", fontSize: 12, fontWeight: 950, opacity: 0.7, borderBottom: "1px solid rgba(2,6,23,0.08)" }}>
+        <div className="ab-table" style={{ marginTop: 14, borderRadius: 18, overflow: "hidden" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 140px 120px", gap: 12, padding: "12px 14px", fontSize: 12, fontWeight: 950, opacity: 0.75, borderBottom: "1px solid var(--table-border)" }}>
             <div>Cliente</div>
             <div>Última visita</div>
             <div>Risco</div>
@@ -185,10 +188,10 @@ export default function CRMClient() {
               const spent = eur(info?.spent ?? 0);
               return (
                 <Link key={c.id} href={`/dashboard/crm/${encodeURIComponent(c.id)}`} style={{ textDecoration: "none", color: "inherit" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 140px 120px", gap: 12, padding: "12px 14px", borderBottom: "1px solid rgba(2,6,23,0.06)" }}>
+                  <div className="ab-row" style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 140px 120px", gap: 12, padding: "12px 14px" }}>
                     <div style={{ fontWeight: 950 }}>{c.name ?? c.phone ?? "Cliente"}</div>
                     <div style={{ fontWeight: 800, opacity: 0.8 }}>{last}</div>
-                    <div style={{ fontWeight: 950, color: risk === "ALTO" ? "#b91c1c" : "rgba(2,6,23,0.65)" }}>{risk}</div>
+                    <div style={{ fontWeight: 950, color: risk === "ALTO" ? "rgba(239,68,68,0.95)" : "rgba(255,255,255,0.70)" }}>{risk}</div>
                     <div style={{ textAlign: "right", fontWeight: 950 }}>{spent}</div>
                   </div>
                 </Link>

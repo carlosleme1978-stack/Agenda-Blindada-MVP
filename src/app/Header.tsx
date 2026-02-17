@@ -15,9 +15,9 @@ export default function Header() {
         position: "sticky",
         top: 0,
         zIndex: 10,
-        backdropFilter: "blur(10px)",
-        background: "rgba(255,255,255,0.75)",
-        borderBottom: "1px solid rgba(0,0,0,0.06)",
+        backdropFilter: "blur(12px)",
+        background: "var(--glass)",
+        borderBottom: "1px solid var(--card-border)",
       }}
     >
       <div
@@ -37,9 +37,8 @@ export default function Header() {
               width: 12,
               height: 12,
               borderRadius: 999,
-              background:
-                "linear-gradient(135deg, rgba(17,94,89,1), rgba(59,130,246,1))",
-              boxShadow: "0 6px 18px rgba(59,130,246,0.35)",
+              background: "var(--primary-gradient)",
+              boxShadow: "0 10px 22px rgba(0,0,0,0.30)",
             }}
           />
           <strong style={{ letterSpacing: -0.2 }}>
@@ -52,7 +51,7 @@ export default function Header() {
             href="/dashboard"
             style={{
               textDecoration: "none",
-              color: "#0f172a",
+              color: "var(--text)",
               fontSize: 14,
               opacity: p?.startsWith("/dashboard") ? 1 : 0.75,
             }}
@@ -63,12 +62,23 @@ export default function Header() {
             href="/dashboard/new"
             style={{
               textDecoration: "none",
-              color: "#0f172a",
+              color: "var(--text)",
               fontSize: 14,
               opacity: p === "/dashboard/new" ? 1 : 0.75,
             }}
           >
             Nova marcação
+          </Link>
+          <Link
+            href="/dashboard/settings"
+            style={{
+              textDecoration: "none",
+              color: "var(--text)",
+              fontSize: 14,
+              opacity: p === "/dashboard/settings" ? 1 : 0.75,
+            }}
+          >
+            Settings
           </Link>
         </div>
       </div>

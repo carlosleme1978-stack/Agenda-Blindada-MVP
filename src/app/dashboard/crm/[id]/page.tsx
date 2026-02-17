@@ -98,30 +98,30 @@ export default function CRMCustomerPage() {
         </div>
 
         <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 }}>
-          <div style={{ padding: 12, borderRadius: 14, border: "1px solid rgba(2,6,23,0.10)", background: "rgba(255,255,255,0.92)" }}>
+          <div className="ab-card" style={{ padding: 12, borderRadius: 14 }}>
             <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Total gasto</div>
             <div style={{ marginTop: 4, fontSize: 18, fontWeight: 950 }}>{loading ? "…" : eur(stats.spent)}</div>
           </div>
-          <div style={{ padding: 12, borderRadius: 14, border: "1px solid rgba(2,6,23,0.10)", background: "rgba(255,255,255,0.92)" }}>
+          <div className="ab-card" style={{ padding: 12, borderRadius: 14 }}>
             <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Visitas</div>
             <div style={{ marginTop: 4, fontSize: 18, fontWeight: 950 }}>{loading ? "…" : stats.visits}</div>
           </div>
-          <div style={{ padding: 12, borderRadius: 14, border: "1px solid rgba(2,6,23,0.10)", background: "rgba(255,255,255,0.92)" }}>
+          <div className="ab-card" style={{ padding: 12, borderRadius: 14 }}>
             <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Ticket médio</div>
             <div style={{ marginTop: 4, fontSize: 18, fontWeight: 950 }}>{loading ? "…" : eur(stats.avg)}</div>
           </div>
-          <div style={{ padding: 12, borderRadius: 14, border: "1px solid rgba(2,6,23,0.10)", background: "rgba(255,255,255,0.92)" }}>
+          <div className="ab-card" style={{ padding: 12, borderRadius: 14 }}>
             <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Última visita</div>
             <div style={{ marginTop: 4, fontSize: 18, fontWeight: 950 }}>{loading ? "…" : stats.last}</div>
           </div>
-          <div style={{ padding: 12, borderRadius: 14, border: "1px solid rgba(2,6,23,0.10)", background: "rgba(255,255,255,0.92)" }}>
+          <div className="ab-card" style={{ padding: 12, borderRadius: 14 }}>
             <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Serviço favorito</div>
             <div style={{ marginTop: 4, fontSize: 14, fontWeight: 950, lineHeight: 1.2 }}>{loading ? "…" : stats.fav}</div>
           </div>
         </div>
 
-        <div style={{ marginTop: 14, borderRadius: 18, border: "1px solid rgba(2,6,23,0.10)", background: "rgba(255,255,255,0.92)", overflow: "hidden" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "220px 1fr 140px 120px", gap: 12, padding: "12px 14px", fontSize: 12, fontWeight: 950, opacity: 0.7, borderBottom: "1px solid rgba(2,6,23,0.08)" }}>
+        <div className="ab-table" style={{ marginTop: 14, borderRadius: 18, overflow: "hidden" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "220px 1fr 140px 120px", gap: 12, padding: "12px 14px", fontSize: 12, fontWeight: 950, opacity: 0.75, borderBottom: "1px solid var(--table-border)" }}>
             <div>Data</div>
             <div>Serviço</div>
             <div>Status</div>
@@ -134,7 +134,7 @@ export default function CRMCustomerPage() {
             <div style={{ padding: 14, opacity: 0.7 }}>Sem histórico.</div>
           ) : (
             appts.map((a) => (
-              <div key={a.id} style={{ display: "grid", gridTemplateColumns: "220px 1fr 140px 120px", gap: 12, padding: "12px 14px", borderBottom: "1px solid rgba(2,6,23,0.06)" }}>
+              <div key={a.id} className="ab-row" style={{ display: "grid", gridTemplateColumns: "220px 1fr 140px 120px", gap: 12, padding: "12px 14px" }}>
                 <div style={{ fontWeight: 950 }}>{new Date(a.start_time).toLocaleString("pt-PT")}</div>
                 <div style={{ fontWeight: 900, opacity: 0.85 }}>{a.service_name_snapshot ?? "—"}</div>
                 <div style={{ fontWeight: 950, opacity: 0.8 }}>{a.status}</div>

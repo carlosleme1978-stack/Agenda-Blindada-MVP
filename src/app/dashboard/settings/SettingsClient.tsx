@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { ensureAccess, type Company } from "@/lib/access";
+import { useABTheme } from "@/app/ThemeProvider";
 
 const days = [
   { v: 1, label: "Seg" },
@@ -17,6 +18,7 @@ const days = [
 
 export default function SettingsClient() {
   const sb = supabaseBrowser;
+  const { theme, setTheme } = useABTheme();
   const [company, setCompany] = useState<Company | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -30,10 +32,11 @@ export default function SettingsClient() {
   const [workDays, setWorkDays] = useState<number[]>([1, 2, 3, 4, 5]);
 
   const card: React.CSSProperties = {
-    background: "rgba(255,255,255,0.86)",
-    border: "1px solid rgba(0,0,0,0.06)",
+    background: "var(--card-bg)",
+    border: "1px solid var(--card-border)",
     borderRadius: 20,
-    boxShadow: "0 30px 60px rgba(15, 23, 42, 0.08), 0 8px 18px rgba(15, 23, 42, 0.05)",
+    boxShadow: "var(--shadow)",
+    backdropFilter: "blur(10px)",
     padding: 18,
     maxWidth: 980,
     margin: "0 auto",
@@ -43,33 +46,35 @@ export default function SettingsClient() {
     width: "100%",
     padding: "12px 12px",
     borderRadius: 12,
-    border: "1px solid rgba(2, 6, 23, 0.12)",
+    border: "1px solid var(--input-border)",
     outline: "none",
     fontSize: 14,
-    background: "rgba(255,255,255,0.95)",
+    background: "var(--input-bg)",
+    color: "var(--text)",
   };
 
   const btn: React.CSSProperties = {
     padding: "10px 12px",
     borderRadius: 12,
-    border: "1px solid rgba(2, 6, 23, 0.10)",
+    border: "1px solid var(--btn-border)",
     cursor: "pointer",
     fontWeight: 900,
     letterSpacing: -0.2,
-    background: "rgba(255,255,255,0.85)",
+    background: "var(--btn-bg)",
+    color: "var(--btn-fg)",
   };
 
   const primaryBtn: React.CSSProperties = {
     width: "100%",
     padding: "12px 14px",
     borderRadius: 12,
-    border: "1px solid rgba(2, 6, 23, 0.10)",
+    border: "1px solid rgba(255,255,255,0.18)",
     cursor: "pointer",
     fontWeight: 900,
     letterSpacing: -0.2,
     color: "white",
-    background: "linear-gradient(135deg, rgba(17,94,89,1), rgba(59,130,246,1))",
-    boxShadow: "0 14px 26px rgba(59,130,246,0.25)",
+    background: "var(--primary-gradient)",
+    boxShadow: "0 14px 26px rgba(0,0,0,0.24)",
     opacity: saving ? 0.85 : 1,
   };
 
@@ -148,8 +153,8 @@ export default function SettingsClient() {
         </div>
 
         <div style={{ display: "flex", gap: 10 }}>
-          <Link href="/dashboard" style={{ ...btn, textDecoration: "none", color: "#0f172a" }}>Voltar</Link>
-          <Link href="/dashboard/services" style={{ ...btn, textDecoration: "none", color: "#0f172a" }}>Serviços</Link>
+          <Link href="/dashboard" style={{ ...btn, textDecoration: "none" }}>Voltar</Link>
+          <Link href="/dashboard/services" style={{ ...btn, textDecoration: "none" }}>Serviços</Link>
         </div>
       </div>
 
@@ -158,9 +163,9 @@ export default function SettingsClient() {
           <div
             style={{
               marginBottom: 12,
-              color: "#b91c1c",
-              background: "rgba(185, 28, 28, 0.07)",
-              border: "1px solid rgba(185, 28, 28, 0.18)",
+              color: "rgba(255,255,255,0.92)",
+              background: "rgba(239,68,68,0.10)",
+              border: "1px solid rgba(239,68,68,0.25)",
               padding: "10px 12px",
               borderRadius: 12,
               fontSize: 13,
@@ -174,9 +179,9 @@ export default function SettingsClient() {
           <div
             style={{
               marginBottom: 12,
-              color: "#065f46",
-              background: "rgba(6, 95, 70, 0.08)",
-              border: "1px solid rgba(6, 95, 70, 0.18)",
+              color: "rgba(255,255,255,0.92)",
+              background: "rgba(16,185,129,0.10)",
+              border: "1px solid rgba(16,185,129,0.25)",
               padding: "10px 12px",
               borderRadius: 12,
               fontSize: 13,
@@ -191,6 +196,21 @@ export default function SettingsClient() {
           <div style={{ opacity: 0.7 }}>Carregando…</div>
         ) : (
           <>
+            <div style={{ marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 900 }}>Tema</div>
+                <div style={{ fontSize: 12, opacity: 0.75 }}>Escolha entre Luxury (preto + dourado leve) e Tech (glassmorphism).</div>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" onClick={() => setTheme("luxury")} style={{ ...btn, background: theme === "luxury" ? "rgba(212,175,55,0.18)" : "var(--btn-bg)" }}>
+                  Luxury
+                </button>
+                <button type="button" onClick={() => setTheme("tech")} style={{ ...btn, background: theme === "tech" ? "rgba(59,130,246,0.16)" : "var(--btn-bg)" }}>
+                  Tech SaaS
+                </button>
+              </div>
+            </div>
+
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 800 }}>Início</div>

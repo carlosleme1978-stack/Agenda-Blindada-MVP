@@ -52,35 +52,68 @@ begin
 end $$;
 
 -- 5) RLS (recomendado)
--- Customers
+
+-- =========================
+-- CUSTOMERS
+-- =========================
 alter table public.customers enable row level security;
-create policy if not exists "customers_owner_read"
-  on public.customers for select
+
+drop policy if exists "customers_owner_read" on public.customers;
+drop policy if exists "customers_owner_write" on public.customers;
+drop policy if exists "customers_owner_update" on public.customers;
+
+create policy "customers_owner_read"
+  on public.customers
+  for select
   using (owner_id = auth.uid());
-create policy if not exists "customers_owner_write"
-  on public.customers for insert
+
+create policy "customers_owner_write"
+  on public.customers
+  for insert
   with check (owner_id = auth.uid());
-create policy if not exists "customers_owner_update"
-  on public.customers for update
+
+create policy "customers_owner_update"
+  on public.customers
+  for update
   using (owner_id = auth.uid())
   with check (owner_id = auth.uid());
 
--- Appointments
+
+-- =========================
+-- APPOINTMENTS
+-- =========================
 alter table public.appointments enable row level security;
-create policy if not exists "appointments_owner_read"
-  on public.appointments for select
+
+drop policy if exists "appointments_owner_read" on public.appointments;
+drop policy if exists "appointments_owner_write" on public.appointments;
+drop policy if exists "appointments_owner_update" on public.appointments;
+
+create policy "appointments_owner_read"
+  on public.appointments
+  for select
   using (owner_id = auth.uid());
-create policy if not exists "appointments_owner_write"
-  on public.appointments for insert
+
+create policy "appointments_owner_write"
+  on public.appointments
+  for insert
   with check (owner_id = auth.uid());
-create policy if not exists "appointments_owner_update"
-  on public.appointments for update
+
+create policy "appointments_owner_update"
+  on public.appointments
+  for update
   using (owner_id = auth.uid())
   with check (owner_id = auth.uid());
 
--- Owner working hours
+
+-- =========================
+-- OWNER WORKING HOURS
+-- =========================
 alter table public.owner_working_hours enable row level security;
-create policy if not exists "owner_hours_owner_all"
-  on public.owner_working_hours for all
+
+drop policy if exists "owner_hours_owner_all" on public.owner_working_hours;
+
+create policy "owner_hours_owner_all"
+  on public.owner_working_hours
+  for all
   using (owner_id = auth.uid())
   with check (owner_id = auth.uid());
