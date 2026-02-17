@@ -16,11 +16,11 @@ export default function Login() {
     () => ({
       width: "100%",
       maxWidth: 400,
-      background: "rgba(255,255,255,0.82)",
+      background: "rgba(51, 54, 60, 0.82)",
       border: "1px solid rgba(2,6,23,0.08)",
       borderRadius: 20,
       boxShadow:
-        "0 40px 80px rgba(2,6,23,0.12), 0 10px 24px rgba(2,6,23,0.08)",
+        "0 40px 80px rgba(2,6,23,0.12), 0 10px 24px rgba(1, 3, 9, 0.08)",
       padding: 24,
     }),
     []
@@ -33,7 +33,7 @@ export default function Login() {
     border: "1px solid rgba(2, 6, 23, 0.12)",
     outline: "none",
     fontSize: 14,
-    background: "rgba(255,255,255,0.95)",
+    background: "rgba(255, 253, 253, 0.95)",
   } as const;
 
   const buttonStyle = {

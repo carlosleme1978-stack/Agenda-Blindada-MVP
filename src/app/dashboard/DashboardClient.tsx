@@ -241,7 +241,7 @@ export default function DashboardClient({ initial }: { initial: DashboardInitial
         </div>
 
         <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1.4fr 0.6fr", gap: 12 }}>
-          <div style={{ borderRadius: 18, border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.92)", padding: 14 }}>
+          <div style={{ borderRadius: 18, border: "1px solid rgba(255,255,255,0.10)", background: "rgba(66, 59, 59, 0.92)", padding: 14 }}>
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <div>
                 <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Métricas</div>
