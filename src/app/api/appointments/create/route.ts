@@ -69,7 +69,10 @@ export async function POST(req: Request) {
       .from("appointments")
       .select("id,start_time,end_time,status")
       .eq("owner_id", ownerId)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
+      // Nota: alguns bancos ainda não possuem o valor PENDING no enum.
+      // Para evitar erro e, ao mesmo tempo, bloquear horários já ocupados,
+      // consideramos apenas estados ativos conhecidos: CONFIRMED/BOOKED.
+      .or("status_v2.in.(CONFIRMED),status.in.(BOOKED,CONFIRMED)")
       .lt("start_time", end.toISOString())
       .gt("end_time", start.toISOString())
       .limit(1);
@@ -113,7 +116,8 @@ export async function POST(req: Request) {
         start_time: start.toISOString(),
         end_time: end.toISOString(),
         status: "BOOKED",
-        status_v2: "PENDING",
+        // Use CONFIRMED por compatibilidade com enums que não incluem PENDING.
+        status_v2: "CONFIRMED",
         staff_id: null,
         service_id: String(pickedServices[0].id),
         customer_name_snapshot: customerName,

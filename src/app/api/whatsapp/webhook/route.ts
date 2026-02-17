@@ -473,6 +473,26 @@ export async function POST(req: NextRequest) {
 
   const companyId = resolvedCompanyId;
 
+  // ✅ SOLO: garantir owner_id nas marcações criadas via WhatsApp
+  // (a UI/availability/agenda usam owner_id para filtrar e bloquear horários)
+  const { data: ownerProfile } = await db
+    .from("profiles")
+    .select("id")
+    .eq("company_id", companyId)
+    .eq("role", "owner")
+    .maybeSingle();
+
+  let ownerId = (ownerProfile as any)?.id ?? null;
+  if (!ownerId) {
+    const { data: anyProfile } = await db
+      .from("profiles")
+      .select("id")
+      .eq("company_id", companyId)
+      .limit(1)
+      .maybeSingle();
+    ownerId = (anyProfile as any)?.id ?? null;
+  }
+
   // ─────────────────────────────────────────────
   // ✅ Nome do cliente (primeira vez)
   // ─────────────────────────────────────────────
@@ -677,7 +697,7 @@ export async function POST(req: NextRequest) {
       .eq("company_id", companyId)
       .gte("start_time", dayStart)
       .lte("start_time", dayEnd)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)");
+      .or("status_v2.in.(CONFIRMED),status.in.(BOOKED,CONFIRMED)");
 
     if (staffId) q = (q as any)// solo: sem staff_id
 
@@ -693,7 +713,7 @@ export async function POST(req: NextRequest) {
       .from("appointments")
       .select("*", { count: "exact", head: true })
       .eq("company_id", companyId)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
+      .or("status_v2.in.(CONFIRMED),status.in.(BOOKED,CONFIRMED)")
       .lt("start_time", endISO)
       .gt("end_time", startISO);
 
@@ -850,7 +870,7 @@ export async function POST(req: NextRequest) {
       .select("id,start_time,status")
       .eq("company_id", companyId)
       .eq("customer_id", customer.id)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
+      .or("status_v2.in.(CONFIRMED),status.in.(BOOKED,CONFIRMED)")
       .gte("start_time", new Date().toISOString())
       .order("start_time", { ascending: true })
       .limit(1)
@@ -981,7 +1001,7 @@ export async function POST(req: NextRequest) {
       .eq("company_id", companyId)
       .gte("start_time", dayStart)
       .lte("start_time", dayEnd)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)");
+      .or("status_v2.in.(CONFIRMED),status.in.(BOOKED,CONFIRMED)");
 
     let free = allSlots.filter((s) => {
       const used = (dayAppts || []).filter((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time)).length;
@@ -1033,7 +1053,7 @@ export async function POST(req: NextRequest) {
       .select("id,status,start_time")
       .eq("company_id", companyId)
       .eq("customer_id", customer.id)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
+      .or("status_v2.in.(CONFIRMED),status.in.(BOOKED,CONFIRMED)")
       .gte("start_time", new Date().toISOString())
       .order("start_time", { ascending: true })
       .limit(1)
@@ -1095,7 +1115,7 @@ export async function POST(req: NextRequest) {
         .select("id,status,status_v2")
         .eq("company_id", companyId)
         .eq("customer_id", customer.id)
-        .or("status_v2.eq.PENDING,status.eq.BOOKED")
+        .or("status_v2.eq.CONFIRMED,status.eq.BOOKED")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -1489,11 +1509,13 @@ if (state === "ASK_DAY") {
       .from("appointments")
       .insert({
         company_id: companyId,
+        owner_id: ownerId,
         customer_id: customer.id,
         start_time: chosen.startISO,
         end_time: chosen.endISO,
         status: "BOOKED",
-        status_v2: "PENDING",
+        // Compat: alguns bancos não têm PENDING no enum.
+        status_v2: "CONFIRMED",
         customer_name_snapshot: customer.name ?? null,
         service_id: ctx?.service_id ?? null,
         service_name_snapshot: ctx?.service_name ?? null,

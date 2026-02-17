@@ -113,8 +113,9 @@ export async function GET(req: Request) {
 
     if (aErr) return NextResponse.json({ error: aErr.message }, { status: 400 });
 
-    const ACTIVE_V2 = new Set(["PENDING", "CONFIRMED"]);
-    const ACTIVE_LEGACY = new Set(["BOOKED", "CONFIRMED", "PENDING"]);
+    // Compat: alguns projetos não têm PENDING no enum.
+    const ACTIVE_V2 = new Set(["CONFIRMED"]);
+    const ACTIVE_LEGACY = new Set(["BOOKED", "CONFIRMED"]);
 
     const busy = (appts ?? [])
       .filter((a: any) => {
