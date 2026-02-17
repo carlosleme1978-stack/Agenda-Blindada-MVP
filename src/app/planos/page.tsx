@@ -33,41 +33,13 @@ export default function PlanosPage() {
     }
   }
 
-  const inputStyle = {
-    width: '100%',
-    padding: '12px 12px',
-    borderRadius: 12,
-    border: '1px solid rgba(2, 6, 23, 0.12)',
-    outline: 'none',
-    fontSize: 14,
-    background: 'rgba(255,255,255,0.95)',
-  } as const;
-
   return (
-    <main
-      style={{
-        minHeight: '100vh',
-        display: 'grid',
-        placeItems: 'center',
-        padding: 18,
-        background:
-          'radial-gradient(1200px 800px at 20% 20%, rgba(99,102,241,0.22), transparent 60%), radial-gradient(900px 700px at 80% 30%, rgba(236,72,153,0.14), transparent 55%), linear-gradient(180deg, #f8fafc 0%, #eef2ff 70%, #ecfeff 100%)',
-      }}
-    >
-      <div
-        style={{
-          width: '100%',
-          maxWidth: 760,
-          borderRadius: 22,
-          border: '1px solid rgba(2,6,23,0.08)',
-          background: 'rgba(255,255,255,0.82)',
-          boxShadow: '0 40px 80px rgba(2,6,23,0.12)',
-          padding: 22,
-        }}
-      >
+    <main style={{ minHeight: 'calc(100vh - 72px)', display: 'grid', placeItems: 'center', padding: 18 }}>
+      <div className="ab-card" style={{ width: '100%', maxWidth: 760 }}>
+        <div className="ab-card-inner">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <strong style={{ letterSpacing: -0.2 }}>Agenda Blindada</strong>
-          <Link href='/login' style={{ fontSize: 13, opacity: 0.75 }}>
+          <Link href='/login' style={{ fontSize: 13, opacity: 0.8, color: 'var(--text)' }}>
             Já tenho conta
           </Link>
         </div>
@@ -82,12 +54,13 @@ export default function PlanosPage() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
           <div>
             <label style={{ fontSize: 13, fontWeight: 800 }}>Nome da empresa</label>
-            <input style={{ ...inputStyle, marginTop: 6 }} value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
+            <input className="ab-input" style={{ marginTop: 6 }} value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
           </div>
           <div>
             <label style={{ fontSize: 13, fontWeight: 800 }}>Email</label>
             <input
-              style={{ ...inputStyle, marginTop: 6 }}
+              className="ab-input"
+              style={{ marginTop: 6 }}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder='seu@email.com'
@@ -99,45 +72,27 @@ export default function PlanosPage() {
         <div style={{ height: 16 }} />
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-          <div style={{ border: '1px solid rgba(2,6,23,0.10)', borderRadius: 16, padding: 16, background: 'rgba(255,255,255,0.9)' }}>
+          <div style={{ border: '1px solid var(--card-border)', borderRadius: 16, padding: 16, background: 'var(--card-bg-strong)' }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>Basic</h2>
             <p style={{ margin: '6px 0 12px', opacity: 0.75, fontSize: 13 }}>Acesso ao painel + WhatsApp + agendamentos.</p>
             <button
               onClick={() => checkout('basic')}
               disabled={loading !== null}
-              style={{
-                width: '100%',
-                padding: '12px 14px',
-                borderRadius: 12,
-                border: '1px solid rgba(2, 6, 23, 0.10)',
-                cursor: 'pointer',
-                fontWeight: 900,
-                color: 'white',
-                background: 'linear-gradient(135deg, rgba(15,23,42,1), rgba(59,130,246,1))',
-                opacity: loading ? 0.85 : 1,
-              }}
+              className="ab-btn ab-btn-primary"
+              style={{ width: '100%', padding: '12px 14px', opacity: loading ? 0.85 : 1 }}
             >
               {loading === 'basic' ? 'A abrir pagamento...' : 'Pagar e criar conta'}
             </button>
           </div>
 
-          <div style={{ border: '1px solid rgba(2,6,23,0.10)', borderRadius: 16, padding: 16, background: 'rgba(255,255,255,0.9)' }}>
+          <div style={{ border: '1px solid var(--card-border)', borderRadius: 16, padding: 16, background: 'var(--card-bg-strong)' }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>Pro</h2>
             <p style={{ margin: '6px 0 12px', opacity: 0.75, fontSize: 13 }}>Tudo do Basic + recursos Pro (guardas e limites).</p>
             <button
               onClick={() => checkout('pro')}
               disabled={loading !== null}
-              style={{
-                width: '100%',
-                padding: '12px 14px',
-                borderRadius: 12,
-                border: '1px solid rgba(2, 6, 23, 0.10)',
-                cursor: 'pointer',
-                fontWeight: 900,
-                color: 'white',
-                background: 'linear-gradient(135deg, rgba(15,23,42,1), rgba(16,185,129,1))',
-                opacity: loading ? 0.85 : 1,
-              }}
+              className="ab-btn ab-btn-primary"
+              style={{ width: '100%', padding: '12px 14px', opacity: loading ? 0.85 : 1 }}
             >
               {loading === 'pro' ? 'A abrir pagamento...' : 'Pagar e criar conta'}
             </button>
@@ -154,6 +109,7 @@ export default function PlanosPage() {
         <p style={{ margin: 0, opacity: 0.7, fontSize: 12 }}>
           Depois do pagamento, você cai automaticamente na criação de conta.
         </p>
+        </div>
       </div>
     </main>
   );

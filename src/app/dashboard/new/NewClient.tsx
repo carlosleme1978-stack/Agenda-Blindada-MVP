@@ -147,10 +147,11 @@ async function loadSlots(nextDate?: string, _nextStaffId?: string, nextMinutes?:
     () => ({
       width: "100%",
       margin: "0 auto",
-      background: "rgba(255,255,255,0.82)",
-      border: "1px solid rgba(0,0,0,0.06)",
+      background: "var(--card-bg)",
+      border: "1px solid var(--card-border)",
       borderRadius: 20,
-      boxShadow: "0 26px 48px rgba(15, 23, 42, 0.08), 0 8px 18px rgba(15, 23, 42, 0.05)",
+      boxShadow: "var(--shadow)",
+      backdropFilter: "blur(10px)",
       padding: 18,
       maxWidth: 450,
     }),
@@ -161,10 +162,11 @@ async function loadSlots(nextDate?: string, _nextStaffId?: string, nextMinutes?:
     width: "100%",
     padding: "12px 12px",
     borderRadius: 12,
-    border: "1px solid rgba(2, 6, 23, 0.12)",
+    border: "1px solid var(--input-border)",
     outline: "none",
     fontSize: 14,
-    background: "rgba(255,255,255,0.9)",
+    background: "var(--input-bg)",
+    color: "var(--text)",
   } as const;
 
   async function save(e: React.FormEvent) {
@@ -214,41 +216,19 @@ async function loadSlots(nextDate?: string, _nextStaffId?: string, nextMinutes?:
     const totals = calcTotals(serviceIds);
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        background:
-          "radial-gradient(1200px 800px at 20% 20%, rgba(99,102,241,0.22), transparent 60%), radial-gradient(900px 700px at 80% 30%, rgba(236,72,153,0.14), transparent 55%), radial-gradient(900px 700px at 55% 85%, rgba(16,185,129,0.12), transparent 55%), linear-gradient(180deg, #f8fafc 0%, #eef2ff 60%, #ecfeff 100%)",
-        padding: "clamp(12px, 3vw, 24px)",
-      }}
-    >
+    <div style={{ minHeight: "calc(100vh - 72px)", display: "flex", flexDirection: "column", padding: "clamp(12px, 3vw, 24px)" }}>
       <main style={{ maxWidth: 900, margin: "0 auto", width: "100%", flex: 1 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
           <div>
-            <Link href="/dashboard" style={{ textDecoration: "none", fontWeight: 800, color: "#0f172a" }}>
+            <Link href="/dashboard" style={{ textDecoration: "none", fontWeight: 800, color: "var(--text)" }}>
               ← Voltar
             </Link>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <Link
               href="/dashboard/billing"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flex: "1 1 auto",
-                textDecoration: "none",
-                padding: "10px 12px",
-                borderRadius: 12,
-                border: "1px solid rgba(2,6,23,0.10)",
-                background: "rgba(255,255,255,0.85)",
-                color: "#0f172a",
-                fontWeight: 700,
-                fontSize: 13,
-                whiteSpace: "nowrap",
-              }}
+              className="ab-btn"
+              style={{ textDecoration: "none", fontSize: 13, whiteSpace: "nowrap" }}
             >
               Faturação
             </Link>
@@ -322,8 +302,8 @@ async function loadSlots(nextDate?: string, _nextStaffId?: string, nextMinutes?:
           gap: 10,
           padding: "10px 12px",
           borderRadius: 12,
-          border: "1px solid rgba(2,6,23,0.10)",
-          background: checked ? "rgba(2,6,23,0.04)" : "rgba(255,255,255,0.9)",
+          border: "1px solid var(--card-border)",
+          background: checked ? "var(--card-bg-strong)" : "var(--card-bg)",
           cursor: "pointer",
         }}
       >

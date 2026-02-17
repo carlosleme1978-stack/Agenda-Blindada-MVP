@@ -542,7 +542,16 @@ export default function ServicesClient() {
                   .map((cat) => {
                     const list = servicesByCategory.get(cat.id) || [];
                     return (
-                      <div key={cat.id} style={{ padding: 12, borderRadius: 16, border: "1px solid rgba(2,6,23,0.10)", background: "rgba(255,255,255,0.85)", opacity: cat.active ? 1 : 0.55 }}>
+                      <div
+                        key={cat.id}
+                        style={{
+                          padding: 12,
+                          borderRadius: 16,
+                          border: "1px solid var(--card-border)",
+                          background: "var(--card-bg-strong)",
+                          opacity: cat.active ? 1 : 0.55,
+                        }}
+                      >
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                           <div>
                             <div style={{ fontWeight: 950 }}>{cat.name}</div>
@@ -635,23 +644,33 @@ function CategoryRowItem({
     width: "100%",
     padding: "10px 10px",
     borderRadius: 12,
-    border: "1px solid rgba(2, 6, 23, 0.12)",
+    border: "1px solid var(--input-border)",
     outline: "none",
     fontSize: 14,
-    background: "rgba(255,255,255,0.95)",
+    background: "var(--input-bg)",
+    color: "var(--text)",
   };
 
   const btn: React.CSSProperties = {
     padding: "10px 12px",
     borderRadius: 12,
-    border: "1px solid rgba(2, 6, 23, 0.10)",
+    border: "1px solid var(--btn-border)",
     cursor: "pointer",
     fontWeight: 900,
-    background: "rgba(255,255,255,0.85)",
+    background: "var(--btn-bg)",
+    color: "var(--btn-fg)",
   };
 
   return (
-    <div style={{ padding: "12px 12px", borderRadius: 16, border: "1px solid rgba(2,6,23,0.10)", background: "rgba(255,255,255,0.85)", opacity: c.active ? 1 : 0.55 }}>
+    <div
+      style={{
+        padding: "12px 12px",
+        borderRadius: 16,
+        border: "1px solid var(--card-border)",
+        background: "var(--card-bg-strong)",
+        opacity: c.active ? 1 : 0.55,
+      }}
+    >
       {!edit ? (
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
           <div>
@@ -669,7 +688,7 @@ function CategoryRowItem({
               {c.active ? "Desativar" : "Ativar"}
             </button>
             <button
-              style={{ ...btn, border: "1px solid rgba(185, 28, 28, 0.25)" }}
+              style={{ ...btn, border: "1px solid rgba(239, 68, 68, 0.35)" }}
               onClick={() => {
                 const ok = confirm("Tem certeza que deseja excluir esta categoria? Os serviços ficarão sem categoria.");
                 if (ok) onDelete();
@@ -743,19 +762,21 @@ function ServiceRowItem({
     width: "100%",
     padding: "10px 10px",
     borderRadius: 12,
-    border: "1px solid rgba(2, 6, 23, 0.12)",
+    border: "1px solid var(--input-border)",
     outline: "none",
     fontSize: 14,
-    background: "rgba(255,255,255,0.95)",
+    background: "var(--input-bg)",
+    color: "var(--text)",
   };
 
   const btn: React.CSSProperties = {
     padding: "10px 12px",
     borderRadius: 12,
-    border: "1px solid rgba(2, 6, 23, 0.10)",
+    border: "1px solid var(--btn-border)",
     cursor: "pointer",
     fontWeight: 900,
-    background: "rgba(255,255,255,0.85)",
+    background: "var(--btn-bg)",
+    color: "var(--btn-fg)",
   };
 
   function eurToCents(v: string) {
@@ -769,7 +790,15 @@ function ServiceRowItem({
   const priceLabel = s.price_cents != null ? `· €${(s.price_cents / 100).toFixed(2)}` : "";
 
   return (
-    <div style={{ padding: "12px 12px", borderRadius: 16, border: "1px solid rgba(2,6,23,0.10)", background: "rgba(255,255,255,0.85)", opacity: s.active ? 1 : 0.55 }}>
+    <div
+      style={{
+        padding: "12px 12px",
+        borderRadius: 16,
+        border: "1px solid var(--card-border)",
+        background: "var(--card-bg-strong)",
+        opacity: s.active ? 1 : 0.55,
+      }}
+    >
       {!edit ? (
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
           <div>
@@ -787,7 +816,7 @@ function ServiceRowItem({
               {s.active ? "Desativar" : "Ativar"}
             </button>
             <button
-              style={{ ...btn, border: "1px solid rgba(185, 28, 28, 0.25)" }}
+              style={{ ...btn, border: "1px solid rgba(239, 68, 68, 0.35)" }}
               onClick={() => {
                 const ok = confirm("Excluir este serviço?");
                 if (ok) onDelete();
