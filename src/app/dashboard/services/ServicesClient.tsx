@@ -398,6 +398,9 @@ export default function ServicesClient() {
           <Link href="/dashboard" style={{ ...btn, textDecoration: "none", color: "#0f172a" }}>
             Voltar
           </Link>
+          <Link href="/dashboard/settings" style={{ ...btn, textDecoration: "none", color: "#0f172a" }}>
+            Horários
+          </Link>
         </div>
       </div>
 
