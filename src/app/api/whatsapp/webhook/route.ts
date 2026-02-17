@@ -677,7 +677,7 @@ export async function POST(req: NextRequest) {
       .eq("company_id", companyId)
       .gte("start_time", dayStart)
       .lte("start_time", dayEnd)
-      .in("status", ["BOOKED", "CONFIRMED"]);
+      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)");
 
     if (staffId) q = (q as any).eq("staff_id", staffId);
 
@@ -693,7 +693,7 @@ export async function POST(req: NextRequest) {
       .from("appointments")
       .select("*", { count: "exact", head: true })
       .eq("company_id", companyId)
-      .in("status", ["BOOKED", "CONFIRMED"])
+      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
       .lt("start_time", endISO)
       .gt("end_time", startISO);
 
@@ -827,7 +827,7 @@ export async function POST(req: NextRequest) {
   async function cancelNextAppointment() {
     const pendingId = ctx?.pending_appointment_id ?? null;
     if (pendingId) {
-      await db.from("appointments").update({ status: "CANCELLED" }).eq("id", pendingId);
+      await db.from("appointments").update({ status: "CANCELLED", status_v2: "CANCELLED" }).eq("id", pendingId);
       await replyAndLog("✅ Ok! Cancelei a tua marcação. Se quiseres marcar outro horário, escreva: *QUERO MARCAR*.", {
         step: "cancel_ok_pending",
         appointment_id: pendingId,
@@ -841,7 +841,7 @@ export async function POST(req: NextRequest) {
       .select("id,start_time,status")
       .eq("company_id", companyId)
       .eq("customer_id", customer.id)
-      .in("status", ["BOOKED", "CONFIRMED"])
+      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
       .gte("start_time", new Date().toISOString())
       .order("start_time", { ascending: true })
       .limit(1)
@@ -856,7 +856,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    await db.from("appointments").update({ status: "CANCELLED" }).eq("id", appt.id);
+    await db.from("appointments").update({ status: "CANCELLED", status_v2: "CANCELLED" }).eq("id", appt.id);
 
     await replyAndLog("✅ Ok! A tua marcação foi cancelada. Se quiseres marcar outro horário, escreva: *QUERO MARCAR*.", {
       step: "cancel_ok",
@@ -968,11 +968,11 @@ export async function POST(req: NextRequest) {
 
     const { data: dayAppts } = await db
       .from("appointments")
-      .select("start_time,end_time,status")
+      .select("start_time,end_time,status,status_v2")
       .eq("company_id", companyId)
       .gte("start_time", dayStart)
       .lte("start_time", dayEnd)
-      .in("status", ["BOOKED", "CONFIRMED"]);
+      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)");
 
     let free = allSlots.filter((s) => {
       const used = (dayAppts || []).filter((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time)).length;
@@ -1024,7 +1024,7 @@ export async function POST(req: NextRequest) {
       .select("id,status,start_time")
       .eq("company_id", companyId)
       .eq("customer_id", customer.id)
-      .in("status", ["BOOKED", "CONFIRMED"])
+      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
       .gte("start_time", new Date().toISOString())
       .order("start_time", { ascending: true })
       .limit(1)
@@ -1076,17 +1076,17 @@ export async function POST(req: NextRequest) {
     let appt: any = null;
 
     if (pendingId) {
-      const r = await db.from("appointments").select("id,status").eq("id", pendingId).maybeSingle();
+      const r = await db.from("appointments").select("id,status,status_v2").eq("id", pendingId).maybeSingle();
       appt = r.data ?? null;
     }
 
     if (!appt) {
       const r = await (db as any)
         .from("appointments")
-        .select("id,status")
+        .select("id,status,status_v2")
         .eq("company_id", companyId)
         .eq("customer_id", customer.id)
-        .eq("status", "BOOKED")
+        .or("status_v2.eq.PENDING,status.eq.BOOKED")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -1096,7 +1096,7 @@ export async function POST(req: NextRequest) {
     if (!appt) return NextResponse.json({ ok: true });
 
     const newStatus = yn === "SIM" ? "CONFIRMED" : "CANCELLED";
-    await db.from("appointments").update({ status: newStatus }).eq("id", appt.id);
+    await db.from("appointments").update({ status: newStatus, status_v2: newStatus === "BOOKED" ? "PENDING" : newStatus }).eq("id", appt.id);
 
     const reply =
       yn === "SIM"
@@ -1221,8 +1221,13 @@ export async function POST(req: NextRequest) {
     const offset: number = Number(ctx?.offset) || 0;
     const categoryId: string | null = ctx?.category_id ?? null;
 
-    const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
-    const n = Number(nRaw);
+    const cleaned = stripDiacritics(textRaw).replace(/[^0-9\-\,\s]/g, " ").trim();
+    const nums = cleaned
+      .split(/[^0-9]+/)
+      .map((x) => Number(x))
+      .filter((x) => Number.isFinite(x) && x > 0);
+    const uniqueNums = Array.from(new Set(nums)).slice(0, 6);
+    const n = uniqueNums[0] ?? NaN;
 
     // 9 = voltar às categorias
     if (n === 9) {
@@ -1275,12 +1280,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    const svc = services[n - 1];
-    if (!svc?.id) {
-      await replyAndLog("Esse serviço não está disponível. Escolhe um número da lista 😊", { step: "service_invalid" });
-      return NextResponse.json({ ok: true });
-    }
+    const picks = uniqueNums.map((k) => services[k - 1]).filter((x) => x?.id);
+if (!picks.length) {
+  await replyAndLog("Esse serviço não está disponível. Escolhe um número da lista 😊", { step: "service_invalid" });
+  return NextResponse.json({ ok: true });
+}
 
+const totalMinutes = picks.reduce((a: number, s: any) => a + Number(s.duration_minutes ?? 0), 0) || Number(picks[0].duration_minutes ?? 30);
+const totalCents = picks.reduce((a: number, s: any) => a + Number(s.price_cents ?? 0), 0);
+const names = picks.map((s: any) => String(s.name ?? "")).filter(Boolean);
+
+const nextCtx = {
+  ...ctx,
+  service_id: picks[0].id,
+  service_ids: picks.map((s: any) => s.id),
+  service_name: names.join(" + "),
+  service_names: names,
+  duration_minutes: totalMinutes,
+  price_cents_total: totalCents,
+  offset: 0,
+};
     const nextCtx = {
       ...ctx,
       service_id: svc.id,
@@ -1295,10 +1314,10 @@ export async function POST(req: NextRequest) {
 
     await setSession("ASK_DAY", nextCtx);
 
-    const price = formatPriceEur(svc.price_cents);
+    const price = formatPriceEur(nextCtx.price_cents_total ?? 0);
     const pricePart = price ? ` (${price})` : "";
 
-    await replyAndLog(`✅ Serviço: *${svc.name}* (${svc.duration_minutes}min)${pricePart}\nAgora diz-me o dia (HOJE, AMANHÃ ou 10/02).`, {
+    await replyAndLog(`✅ Serviço: *${nextCtx.service_name}* (${nextCtx.duration_minutes}min)${pricePart}\nAgora diz-me o dia (HOJE, AMANHÃ ou 10/02).`, {
       step: "day",
     });
 
@@ -1423,7 +1442,7 @@ if (state === "ASK_DAY") {
 
     const rescheduleFromId = ctx?.reschedule_from_appointment_id ?? null;
     if (ctx?.mode === "RESCHEDULE" && rescheduleFromId) {
-      await db.from("appointments").update({ status: "CANCELLED" }).eq("id", rescheduleFromId);
+      await db.from("appointments").update({ status: "CANCELLED", status_v2: "CANCELLED" }).eq("id", rescheduleFromId);
     }
 
     const insert = await db
@@ -1434,16 +1453,36 @@ if (state === "ASK_DAY") {
         start_time: chosen.startISO,
         end_time: chosen.endISO,
         status: "BOOKED",
+        status_v2: "PENDING",
         customer_name_snapshot: customer.name ?? null,
         service_id: ctx?.service_id ?? null,
         service_name_snapshot: ctx?.service_name ?? null,
         service_duration_minutes_snapshot: Number(ctx?.duration_minutes) || null,
+        service_price_cents_snapshot: Number(ctx?.price_cents_total ?? null) || null,
+        service_currency_snapshot: "EUR",
         staff_id: ctx?.staff_id ?? null,
       })
       .select("id")
       .single();
 
     const apptId = insert.data?.id ?? null;
+
+// ✅ múltiplos serviços (extensão segura)
+const pickedIds: string[] = Array.isArray(ctx?.service_ids) ? ctx.service_ids.map((x: any) => String(x)).filter(Boolean) : [];
+if (apptId && pickedIds.length > 1) {
+  // carrega detalhes para snapshots (best-effort)
+  const { data: svs } = await db.from("services").select("id,name,duration_minutes,price_cents,currency").in("id", pickedIds);
+  const rows = (svs ?? []).map((s: any) => ({
+    appointment_id: apptId,
+    service_id: String(s.id),
+    service_name_snapshot: String(s.name ?? ""),
+    duration_minutes_snapshot: Number(s.duration_minutes ?? 0),
+    price_cents_snapshot: Number(s.price_cents ?? 0),
+    currency_snapshot: String(s.currency ?? "EUR"),
+  }));
+  if (rows.length) await db.from("appointment_services").insert(rows);
+}
+
 
     await setSession("WAIT_CONFIRM", {
       mode: ctx?.mode ?? "NEW",

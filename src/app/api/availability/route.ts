@@ -155,10 +155,10 @@ export async function GET(req: Request) {
 
     const { data: appts, error: aErr } = await admin
       .from("appointments")
-      .select("start_time,end_time,status")
+      .select("start_time,end_time,status,service_duration_minutes_snapshot")
       .eq("company_id", companyId)
       .eq("staff_id", staffId)
-      .in("status", ["BOOKED", "CONFIRMED"])
+      .in("status", ["BOOKED", "CONFIRMED", "PENDING"])
       .lt("start_time", dayEndUtc.toISOString())
       .gt("end_time", dayStartUtc.toISOString());
 
@@ -167,7 +167,7 @@ export async function GET(req: Request) {
     const busy = (appts ?? [])
       .map((a: any) => ({
         s: new Date(a.start_time).getTime(),
-        e: new Date(a.end_time).getTime(),
+        e: (a.end_time ? new Date(a.end_time).getTime() : (new Date(a.start_time).getTime() + (Number((a as any).service_duration_minutes_snapshot ?? durationMinutes) * 60_000))),
       }))
       .filter((x) => Number.isFinite(x.s) && Number.isFinite(x.e));
 

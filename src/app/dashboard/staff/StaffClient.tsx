@@ -1,9 +1,14 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
-import { ensureAccess, type Company } from "@/lib/access";
+
+type Company = {
+  id: string;
+  name: string | null;
+  plan?: string | null;
+};
 
 type StaffRow = {
   id: string;
@@ -14,11 +19,34 @@ type StaffRow = {
   created_at?: string;
 };
 
-export default function StaffClient() {
-  const sb = supabaseBrowser;
-  const [company, setCompany] = useState<Company | null>(null);
+type StaffFinancial = {
+  staff_id: string;
+  revenue_realized_cents: number | null;
+  revenue_expected_cents: number | null;
+  revenue_lost_cents: number | null;
+  total_completed: number | null;
+  total_no_show: number | null;
+  avg_ticket_cents: number | null;
+};
 
-  const [loading, setLoading] = useState(true);
+type StaffOccupancy = {
+  staff_id: string;
+  booked_minutes: number | null;
+  available_minutes: number | null;
+};
+
+export default function StaffClient(props: {
+  initialCompany: Company;
+  initialStaff: StaffRow[];
+  initialFinancial: StaffFinancial[];
+  initialOccupancy: StaffOccupancy[];
+}) {
+  const sb = supabaseBrowser;
+
+  const [company] = useState<Company>(props.initialCompany);
+  const [staff, setStaff] = useState<StaffRow[]>(props.initialStaff);
+
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -26,91 +54,49 @@ export default function StaffClient() {
   const [hoursStaff, setHoursStaff] = useState<StaffRow | null>(null);
   const [hours, setHours] = useState<{ day_of_week: number; start_time: string; end_time: string; active: boolean }[]>([]);
 
-  const [staff, setStaff] = useState<StaffRow[]>([]);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [role, setRole] = useState("staff");
+
+  const finMap = useMemo(() => {
+    const m = new Map<string, StaffFinancial>();
+    for (const r of props.initialFinancial ?? []) m.set(r.staff_id, r);
+    return m;
+  }, [props.initialFinancial]);
+
+  const occMap = useMemo(() => {
+    const m = new Map<string, StaffOccupancy>();
+    for (const r of props.initialOccupancy ?? []) m.set(r.staff_id, r);
+    return m;
+  }, [props.initialOccupancy]);
 
   const input: React.CSSProperties = {
     width: "100%",
     padding: "12px 12px",
     borderRadius: 12,
-    border: "1px solid rgba(2, 6, 23, 0.12)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(0,0,0,0.25)",
+    color: "#fff",
     outline: "none",
-    fontSize: 14,
-    background: "rgba(255,255,255,0.95)",
   };
 
-  const btn: React.CSSProperties = {
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid rgba(2, 6, 23, 0.10)",
-    cursor: "pointer",
-    fontWeight: 900,
-    letterSpacing: -0.2,
-    background: "rgba(255,255,255,0.85)",
-  };
-
-  const card: React.CSSProperties = {
-    background: "rgba(255,255,255,0.86)",
-    border: "1px solid rgba(0,0,0,0.06)",
-    borderRadius: 20,
-    boxShadow: "0 30px 60px rgba(15, 23, 42, 0.08), 0 8px 18px rgba(15, 23, 42, 0.05)",
-    padding: 18,
-    maxWidth: 980,
-    margin: "0 auto",
-  };
-
-  const inputStyle: React.CSSProperties = {
-    width: "100%",
-    padding: "8px 10px",
-    borderRadius: 10,
-    border: "1px solid rgba(2, 6, 23, 0.12)",
-    outline: "none",
-    fontSize: 13,
-    background: "rgba(255,255,255,0.95)",
-  };
-
-  const rowBtn: React.CSSProperties = {
-    padding: "8px 10px",
-    borderRadius: 10,
-    border: "1px solid rgba(2, 6, 23, 0.10)",
-    cursor: "pointer",
-    fontWeight: 800,
-    background: "rgba(255,255,255,0.9)",
-  };
-
-  async function load() {
-    setLoading(true);
-    setMsg(null);
-    try {
-      const res = await ensureAccess(sb, {
-        requireActiveSubscription: true,
-        requireOnboardingComplete: false,
-      });
-      if (!res.ok || !res.company) return;
-
-      setCompany(res.company);
-
-      const r = await sb
-        .from("staff")
-        .select("id,name,phone,role,active,created_at")
-        .eq("company_id", res.company.id)
-        .order("created_at", { ascending: true });
-
-      if (r.error) throw r.error;
-      setStaff((r.data ?? []) as any);
-    } catch (e: any) {
-      setMsg(e?.message ?? "Erro ao carregar staff.");
-    } finally {
-      setLoading(false);
-    }
+  function fmtEuro(cents?: number | null) {
+    const v = Number(cents ?? 0) / 100;
+    return v.toLocaleString(undefined, { style: "currency", currency: "EUR" });
   }
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  function fmtPct(num: number) {
+    return (num * 100).toFixed(0) + "%";
+  }
+
+  function occupancyFor(staffId: string) {
+    const o = occMap.get(staffId);
+    const booked = Number(o?.booked_minutes ?? 0);
+    const avail = Number(o?.available_minutes ?? 0);
+    if (!avail || avail <= 0) return { rate: 0, label: "—" };
+    const rate = booked / avail;
+    return { rate, label: fmtPct(rate) };
+  }
 
   async function add() {
     setMsg(null);
@@ -118,43 +104,36 @@ export default function StaffClient() {
 
     const nm = name.trim();
     if (!nm) return setMsg("Informe o nome.");
-    const isPro = String(company?.plan || "").toLowerCase() === "pro";
-    
+
     setSaving(true);
     try {
       const { data: sess } = await sb.auth.getSession();
       const token = sess.session?.access_token;
       if (!token) throw new Error("Faça login novamente.");
 
-      const isPro = String(company?.plan || "").toLowerCase() === "pro";      const endpoint = "/api/staff/create";
-
-      const res = await fetch(endpoint, {
+      const res = await fetch("/api/staff/create", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ name: nm, phone: phone.trim() || null, role: role.trim() || "staff" }),
       });
 
       const json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(json?.error || "Falha ao criar staff.");
 
-      if (!res.ok) {
-        throw new Error(json?.error || "Erro ao adicionar.");
-      }
-
-      setStaff((p) => [...p, (json.staff as any)]);
-      if (json?.invited_email) {
-        setMsg(`Convite enviado para ${json.invited_email}.`);
-      }
+      // Update UI optimistically
+      setStaff((prev) => [...prev, json.staff].sort((a, b) => (a.created_at || "").localeCompare(b.created_at || "")));
       setName("");
       setPhone("");
-            setRole("staff");
+      setRole("staff");
+      setMsg("Staff criado.");
     } catch (e: any) {
-      setMsg(e?.message ?? "Erro ao adicionar.");
+      setMsg(e?.message ?? "Erro ao criar staff.");
     } finally {
       setSaving(false);
     }
   }
 
-  async function toggleActive(id: string, active: boolean) {
+  async function toggle(s: StaffRow) {
     setMsg(null);
     setSaving(true);
     try {
@@ -165,289 +144,278 @@ export default function StaffClient() {
       const res = await fetch("/api/staff/toggle", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ staff_id: id, active: !active }),
+        body: JSON.stringify({ staff_id: s.id, active: !s.active }),
       });
 
       const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error || "Erro ao atualizar.");
+      if (!res.ok) throw new Error(json?.error || "Falha ao atualizar staff.");
 
-      setStaff((p) => p.map((s) => (s.id === id ? { ...s, active: !active } : s)));
+      setStaff((prev) => prev.map((x) => (x.id === s.id ? { ...x, active: !x.active } : x)));
+      setMsg("Atualizado.");
     } catch (e: any) {
-      setMsg(e?.message ?? "Erro ao atualizar.");
+      setMsg(e?.message ?? "Erro ao atualizar staff.");
     } finally {
       setSaving(false);
     }
   }
-  async function openHours(st: StaffRow) {
+
+  async function openHours(s: StaffRow) {
     setMsg(null);
-    setHoursStaff(st);
-    setHoursOpen(true);
+    setLoading(true);
     try {
       const { data: sess } = await sb.auth.getSession();
       const token = sess.session?.access_token;
       if (!token) throw new Error("Faça login novamente.");
-      const res = await fetch(`/api/staff/hours?staff_id=${encodeURIComponent(st.id)}`, { headers: { Authorization: `Bearer ${token}` } });
-      const j = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(j?.error || "Erro ao carregar horários");
-      const got = (j?.hours ?? []) as any[];
-      // normalize + ensure 0..6 rows
-      const by = new Map<number, any>();
-      got.forEach((h) => by.set(Number(h.day_of_week), h));
-      const def = (dow: number) => by.get(dow) || { day_of_week: dow, start_time: "09:00", end_time: "18:00", active: dow >= 1 && dow <= 5 };
-      setHours([0,1,2,3,4,5,6].map(def));
+
+      const res = await fetch("/api/staff/hours", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ staff_id: s.id, action: "get" }),
+      });
+
+      const json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(json?.error || "Falha ao carregar horários.");
+
+      setHoursStaff(s);
+      setHours(json.hours ?? []);
+      setHoursOpen(true);
     } catch (e: any) {
-      setMsg(e?.message || "Erro");
+      setMsg(e?.message ?? "Erro ao carregar horários.");
+    } finally {
+      setLoading(false);
     }
   }
 
   async function saveHours() {
     if (!hoursStaff) return;
-    setSaving(true);
     setMsg(null);
+    setSaving(true);
     try {
       const { data: sess } = await sb.auth.getSession();
       const token = sess.session?.access_token;
       if (!token) throw new Error("Faça login novamente.");
+
       const res = await fetch("/api/staff/hours", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ staff_id: hoursStaff.id, hours }),
+        body: JSON.stringify({ staff_id: hoursStaff.id, action: "set", hours }),
       });
-      const j = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(j?.error || "Erro ao salvar horários");
+
+      const json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(json?.error || "Falha ao salvar horários.");
+
+      setMsg("Horários salvos.");
       setHoursOpen(false);
       setHoursStaff(null);
-      setMsg("Horários atualizados.");
     } catch (e: any) {
-      setMsg(e?.message || "Erro");
+      setMsg(e?.message ?? "Erro ao salvar horários.");
     } finally {
       setSaving(false);
     }
   }
 
+  const rows = useMemo(() => {
+    return staff.map((s) => {
+      const f = finMap.get(s.id);
+      const o = occupancyFor(s.id);
+      return {
+        ...s,
+        revenue: fmtEuro(f?.revenue_realized_cents),
+        ticket: fmtEuro(f?.avg_ticket_cents),
+        noShow: Number(f?.total_no_show ?? 0),
+        completed: Number(f?.total_completed ?? 0),
+        occupancy: o.label,
+        occupancyRate: o.rate,
+      };
+    });
+  }, [staff, finMap, occMap]);
+
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ maxWidth: 980, margin: "0 auto", display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+    <div style={{ padding: 18, maxWidth: 1200, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 22 }}>Staff</h1>
-          <div style={{ opacity: 0.7, fontSize: 13 }}>Cadastre quem atende. (Ativos aparecem nas marcações.)</div>
+          <div style={{ fontSize: 18, fontWeight: 800 }}>Staff</div>
+          <div style={{ opacity: 0.8, fontSize: 13 }}>{company?.name ?? ""}</div>
         </div>
-
-        <div style={{ display: "flex", gap: 10 }}>
-          <Link href="/dashboard" style={{ ...btn, textDecoration: "none", color: "#0f172a" }}>Voltar</Link>
-          <Link href="/dashboard/services" style={{ ...btn, textDecoration: "none", color: "#0f172a" }}>Serviços</Link>
-          <Link href="/dashboard/settings" style={{ ...btn, textDecoration: "none", color: "#0f172a" }}>Settings</Link>
-        </div>
+        <Link href="/dashboard" style={{ opacity: 0.9, textDecoration: "none" }}>
+          ← Voltar
+        </Link>
       </div>
 
+      {msg ? (
+        <div style={{ marginBottom: 12, padding: 12, borderRadius: 12, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)" }}>
+          {msg}
+        </div>
+      ) : null}
 
-      <div style={card}>
-        {company && (
-          <div style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ fontSize: 13, opacity: 0.8 }}>
-              Plano: <b>{company.plan?.toUpperCase?.() ? company.plan.toUpperCase() : company.plan}</b> · Staff ativo:{" "}
-              <b>{staff.filter((x) => x.active).length}</b> / <b>{company.staff_limit ?? 1}</b>
-            </div>
-            {staff.filter((x) => x.active).length >= (company.staff_limit ?? 1) && (
-              <Link href="/dashboard/billing" style={{ fontSize: 13, fontWeight: 900, textDecoration: "none" }}>
-                Atualizar para PRO →
-              </Link>
-            )}
-          </div>
-        )}
-
-        {msg && (
-          <div
-            style={{
-              marginBottom: 12,
-              color: "#b91c1c",
-              background: "rgba(185, 28, 28, 0.07)",
-              border: "1px solid rgba(185, 28, 28, 0.18)",
-              padding: "10px 12px",
-              borderRadius: 12,
-              fontSize: 13,
-            }}
-          >
-            {msg}
-          </div>
-        )}
-
-        {loading ? (
-          <div style={{ opacity: 0.7 }}>Carregando…</div>
-        ) : (
-          <>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 800 }}>Nome</div>
-                <input style={{ ...input, marginTop: 6 }} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Ana" />
-              </div>
-
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 800 }}>Telefone</div>
-                <input style={{ ...input, marginTop: 6 }} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Opcional" />
-              </div>
-
-
-
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 800 }}>Cargo</div>
-                <select style={{ ...input, marginTop: 6 }} value={role} onChange={(e) => setRole(e.target.value)}>
-                  <option value="staff">Staff</option>
-                  <option value="assistant">Assistente</option>
-                  <option value="owner">Owner</option>
-                </select>
-              </div>
-
-              <button
-                disabled={saving || (!!company && staff.filter((x) => x.active).length >= (company.staff_limit ?? 1))}
-                style={btn}
-                onClick={add}
-                type="button"
-              >
-                {saving ? "…" : "Adicionar"}
-              </button>
-            </div>
-
-            <div style={{ height: 14 }} />
-
-            <div style={{ display: "grid", gap: 10 }}>
-              {staff.length === 0 ? (
-                <div style={{ opacity: 0.7 }}>Nenhum staff cadastrado.</div>
-              ) : (
-                staff.map((s) => (
-                  <div
-                    key={s.id}
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "2fr 1fr 1fr auto",
-                      gap: 10,
-                      alignItems: "center",
-                      padding: 12,
-                      borderRadius: 16,
-                      border: "1px solid rgba(2,6,23,0.08)",
-                      background: "rgba(255,255,255,0.8)",
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: 900 }}>{s.name}</div>
-                      <div style={{ fontSize: 12, opacity: 0.7 }}>{s.role ?? "staff"}</div>
-                    </div>
-                    <div style={{ fontFamily: "ui-monospace, SFMono-Regular" }}>{s.phone ?? "—"}</div>
-                    <div style={{ fontSize: 12, opacity: 0.7 }}>{s.active ? "Ativo" : "Inativo"}</div>
-                    <button disabled={saving} style={btn} onClick={() => openHours(s)} type="button">
-                      Horários
-                    </button>
-                    <button disabled={saving} style={btn} onClick={() => toggleActive(s.id, s.active)} type="button">
-                      {s.active ? "Desativar" : "Ativar"}
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </>
-        )}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
+        <input style={input} placeholder="Nome" value={name} onChange={(e) => setName(e.target.value)} />
+        <input style={input} placeholder="Telefone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        <select style={input as any} value={role} onChange={(e) => setRole(e.target.value)}>
+          <option value="staff">Staff</option>
+          <option value="admin">Admin</option>
+        </select>
       </div>
 
-      {hoursOpen && hoursStaff && (
-        <div
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16 }}>
+        <button
+          onClick={add}
+          disabled={saving}
           style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(2,6,23,0.45)",
-            display: "grid",
-            placeItems: "center",
-            padding: 18,
-            zIndex: 50,
-          }}
-          onClick={() => {
-            if (!saving) {
-              setHoursOpen(false);
-              setHoursStaff(null);
-            }
+            padding: "12px 14px",
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,0.14)",
+            background: "rgba(145, 92, 255, 0.18)",
+            color: "#fff",
+            fontWeight: 700,
+            cursor: "pointer",
           }}
         >
-          <div
-            style={{
-              width: "100%",
-              maxWidth: 520,
-              background: "rgba(255,255,255,0.95)",
-              border: "1px solid rgba(2,6,23,0.10)",
-              borderRadius: 18,
-              padding: 16,
-              boxShadow: "0 30px 60px rgba(2,6,23,0.18)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-              <div>
-                <div style={{ fontWeight: 900, fontSize: 16, letterSpacing: -0.3 }}>Horários · {hoursStaff.name}</div>
-                <div style={{ fontSize: 12, opacity: 0.75 }}>Defina horários por dia. Isso controla a disponibilidade.</div>
-              </div>
+          + Adicionar
+        </button>
+        {loading ? <span style={{ opacity: 0.8 }}>Carregando…</span> : null}
+      </div>
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+          <thead>
+            <tr style={{ textAlign: "left" }}>
+              <th style={{ padding: 12, borderBottom: "1px solid rgba(255,255,255,0.10)" }}>Nome</th>
+              <th style={{ padding: 12, borderBottom: "1px solid rgba(255,255,255,0.10)" }}>Ativo</th>
+              <th style={{ padding: 12, borderBottom: "1px solid rgba(255,255,255,0.10)" }}>Receita</th>
+              <th style={{ padding: 12, borderBottom: "1px solid rgba(255,255,255,0.10)" }}>Ticket</th>
+              <th style={{ padding: 12, borderBottom: "1px solid rgba(255,255,255,0.10)" }}>Ocupação</th>
+              <th style={{ padding: 12, borderBottom: "1px solid rgba(255,255,255,0.10)" }}>No-show</th>
+              <th style={{ padding: 12, borderBottom: "1px solid rgba(255,255,255,0.10)" }}>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((s) => (
+              <tr key={s.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                <td style={{ padding: 12 }}>
+                  <div style={{ fontWeight: 800 }}>{s.name}</div>
+                  <div style={{ opacity: 0.75, fontSize: 12 }}>{s.phone ?? ""}</div>
+                </td>
+                <td style={{ padding: 12 }}>
+                  <span style={{ padding: "6px 10px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.14)", background: s.active ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)" }}>
+                    {s.active ? "Ativo" : "Inativo"}
+                  </span>
+                </td>
+                <td style={{ padding: 12 }}>{s.revenue}</td>
+                <td style={{ padding: 12 }}>{s.ticket}</td>
+                <td style={{ padding: 12 }}>{s.occupancy}</td>
+                <td style={{ padding: 12 }}>{s.noShow}</td>
+                <td style={{ padding: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => toggle(s)}
+                    disabled={saving}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      border: "1px solid rgba(255,255,255,0.14)",
+                      background: "rgba(255,255,255,0.06)",
+                      color: "#fff",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {s.active ? "Desativar" : "Ativar"}
+                  </button>
+                  <button
+                    onClick={() => openHours(s)}
+                    disabled={saving || loading}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      border: "1px solid rgba(255,255,255,0.14)",
+                      background: "rgba(59,130,246,0.10)",
+                      color: "#fff",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Horários
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {!rows.length ? (
+              <tr>
+                <td colSpan={7} style={{ padding: 14, opacity: 0.75 }}>
+                  Nenhum staff cadastrado.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+
+      {hoursOpen && hoursStaff ? (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+          <div style={{ width: 720, maxWidth: "100%", borderRadius: 16, border: "1px solid rgba(255,255,255,0.14)", background: "#0B0B12", padding: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ fontWeight: 900 }}>Horários — {hoursStaff.name}</div>
               <button
-                style={{ ...rowBtn, padding: "8px 10px" }}
                 onClick={() => {
-                  if (!saving) {
-                    setHoursOpen(false);
-                    setHoursStaff(null);
-                  }
+                  setHoursOpen(false);
+                  setHoursStaff(null);
                 }}
-                type="button"
+                style={{ padding: "8px 10px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.06)", color: "#fff" }}
               >
                 Fechar
               </button>
             </div>
 
-            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-              {hours.map((h) => {
-                const labels = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-                return (
-                  <div key={h.day_of_week} style={{ display: "grid", gridTemplateColumns: "0.6fr 0.5fr 0.5fr 0.6fr", gap: 10, alignItems: "center" }}>
-                    <div style={{ fontWeight: 900 }}>{labels[h.day_of_week]}</div>
-                    <input
-                      style={inputStyle}
-                      type="time"
-                      value={String(h.start_time || "09:00").slice(0, 5)}
-                      disabled={!h.active}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setHours((p) => p.map((x) => (x.day_of_week === h.day_of_week ? { ...x, start_time: v } : x)));
-                      }}
-                    />
-                    <input
-                      style={inputStyle}
-                      type="time"
-                      value={String(h.end_time || "18:00").slice(0, 5)}
-                      disabled={!h.active}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setHours((p) => p.map((x) => (x.day_of_week === h.day_of_week ? { ...x, end_time: v } : x)));
-                      }}
-                    />
-                    <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
-                      <input
-                        type="checkbox"
-                        checked={!!h.active}
-                        onChange={(e) => {
-                          const v = e.target.checked;
-                          setHours((p) => p.map((x) => (x.day_of_week === h.day_of_week ? { ...x, active: v } : x)));
-                        }}
-                      />
-                      Ativo
-                    </label>
-                  </div>
-                );
-              })}
+            <div style={{ display: "grid", gridTemplateColumns: "120px 1fr 1fr 90px", gap: 10, fontSize: 12, opacity: 0.85, padding: "6px 0" }}>
+              <div>Dia</div>
+              <div>Início</div>
+              <div>Fim</div>
+              <div>Ativo</div>
             </div>
 
-            <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-              <button style={{ ...btn, flex: 1 }} disabled={saving} onClick={saveHours} type="button">
-                {saving ? "Salvando..." : "Salvar horários"}
+            {hours.map((h, idx) => (
+              <div key={idx} style={{ display: "grid", gridTemplateColumns: "120px 1fr 1fr 90px", gap: 10, alignItems: "center", padding: "8px 0" }}>
+                <div style={{ opacity: 0.9 }}>{["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"][h.day_of_week]}</div>
+                <input
+                  style={input}
+                  value={h.start_time}
+                  onChange={(e) =>
+                    setHours((prev) => prev.map((x, i) => (i === idx ? { ...x, start_time: e.target.value } : x)))
+                  }
+                />
+                <input
+                  style={input}
+                  value={h.end_time}
+                  onChange={(e) =>
+                    setHours((prev) => prev.map((x, i) => (i === idx ? { ...x, end_time: e.target.value } : x)))
+                  }
+                />
+                <input
+                  type="checkbox"
+                  checked={h.active}
+                  onChange={(e) => setHours((prev) => prev.map((x, i) => (i === idx ? { ...x, active: e.target.checked } : x)))}
+                />
+              </div>
+            ))}
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 12 }}>
+              <button
+                onClick={saveHours}
+                disabled={saving}
+                style={{
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  background: "rgba(34,197,94,0.14)",
+                  color: "#fff",
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                Salvar
               </button>
             </div>
           </div>
         </div>
-      )}
-
+      ) : null}
     </div>
   );
 }

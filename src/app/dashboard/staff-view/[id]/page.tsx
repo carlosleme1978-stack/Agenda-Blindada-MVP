@@ -21,25 +21,25 @@ type AppointmentRow = {
 };
 
 function startOfDayISO(d: Date) {
-  const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
   return x.toISOString();
 }
 function endOfDayISO(d: Date) {
-  const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999));
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
   return x.toISOString();
 }
 
 function fmtDateLabel(iso: string) {
   const d = new Date(iso);
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = d.getUTCFullYear();
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
   return `${dd}/${mm}/${yyyy}`;
 }
 function fmtTime(iso: string) {
   const d = new Date(iso);
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const mi = String(d.getUTCMinutes()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
   return `${hh}:${mi}`;
 }
 
@@ -53,7 +53,7 @@ export default function StaffViewPage({ params }: { params: { id: string } }) {
   const [rows, setRows] = useState<AppointmentRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const [day, setDay] = useState<"today" | "tomorrow" | "week">("today");
+  const [day, setDay] = useState<"today" | "tomorrow" | "week" | "month">("week");
   const [tab, setTab] = useState<"ALL" | "CONFIRMED" | "PENDING" | "CANCELLED">("ALL");
 
   useEffect(() => {
@@ -111,7 +111,7 @@ export default function StaffViewPage({ params }: { params: { id: string } }) {
 
         // Date window
         const now = new Date();
-        const d0 = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+        const d0 = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0));
         const from =
           day === "today"
             ? startOfDayISO(d0)

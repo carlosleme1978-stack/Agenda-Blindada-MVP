@@ -23,7 +23,8 @@ export default function NewClient() {
   const [slots, setSlots] = useState<{ label: string; startISO: string }[]>([]);
   const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
   const [categoryId, setCategoryId] = useState<string>("");
-  const [services, setServices] = useState<{ id: string; name: string; duration_minutes: number; category_id?: string | null }[]>([]);
+  const [services, setServices] = useState<{ id: string; name: string; duration_minutes: number; price_cents?: number | null; currency?: string | null; category_id?: string | null }[]>([]);
+  const [serviceIds, setServiceIds] = useState<string[]>([]);
   const [serviceId, setServiceId] = useState<string>("");
   const [slotISO, setSlotISO] = useState<string>("");
 
@@ -48,14 +49,15 @@ export default function NewClient() {
       setCategories(catList.map((c) => ({ id: String(c.id), name: String(c.name) })));
       if (catList[0]?.id) setCategoryId(String(catList[0].id));
 
-      const { data: svs } = await sb.from("services").select("id,name,duration_minutes,category_id").eq("active", true).order("name");
+      const { data: svs } = await sb.from("services").select("id,name,duration_minutes,price_cents,currency,category_id").eq("active", true).order("name");
       const svList = (svs ?? []) as any[];
       // filtra pela primeira categoria se existir
       const firstCat = String(catList[0]?.id ?? "");
       const filtered = firstCat ? svList.filter((s) => String(s.category_id) === firstCat) : svList;
-      setServices(filtered.map((s) => ({ id: String(s.id), name: String(s.name), duration_minutes: Number(s.duration_minutes ?? 30), category_id: (s as any).category_id ?? null })));
+      setServices(filtered.map((s) => ({ id: String(s.id), name: String(s.name), duration_minutes: Number((s as any).duration_minutes ?? 30), price_cents: (s as any).price_cents ?? null, currency: (s as any).currency ?? null, category_id: (s as any).category_id ?? null })));
       if (filtered[0]?.id) {
         setServiceId(String(filtered[0].id));
+        setServiceIds([String(filtered[0].id)]);
         setMinutes(Number(filtered[0].duration_minutes ?? 30));
       }
 
@@ -89,10 +91,10 @@ export default function NewClient() {
     setCategoryId(newCatId);
     setServiceId("");
     const sb = supabaseBrowser;
-    const { data: svs } = await sb.from("services").select("id,name,duration_minutes,category_id").eq("active", true).order("name");
+    const { data: svs } = await sb.from("services").select("id,name,duration_minutes,price_cents,currency,category_id").eq("active", true).order("name");
     const svList = (svs ?? []) as any[];
     const filtered = newCatId ? svList.filter((s) => String(s.category_id) === String(newCatId)) : svList;
-    setServices(filtered.map((s) => ({ id: String(s.id), name: String(s.name), duration_minutes: Number(s.duration_minutes ?? 30), category_id: (s as any).category_id ?? null })));
+    setServices(filtered.map((s) => ({ id: String(s.id), name: String(s.name), duration_minutes: Number((s as any).duration_minutes ?? 30), price_cents: (s as any).price_cents ?? null, currency: (s as any).currency ?? null, category_id: (s as any).category_id ?? null })));
     if (filtered[0]?.id) {
       setServiceId(String(filtered[0].id));
       setMinutes(Number(filtered[0].duration_minutes ?? 30));
@@ -100,7 +102,34 @@ export default function NewClient() {
     }
   }
 
-  async function loadSlots(nextDate?: string, nextStaffId?: string, nextMinutes?: number) {
+  
+function calcTotals(ids: string[]) {
+  const picked = services.filter((s) => ids.includes(s.id));
+  const totalMin = picked.reduce((a, s) => a + Number(s.duration_minutes || 0), 0) || 30;
+  const totalCents = picked.reduce((a, s) => a + Number(s.price_cents || 0), 0);
+  const currency = (picked.find((s) => s.currency)?.currency ?? "EUR") as string;
+  return { totalMin, totalCents, currency, picked };
+}
+
+function toggleService(id: string) {
+  setServiceIds((prev) => {
+    const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+    const { totalMin } = calcTotals(next.length ? next : [id]);
+    setMinutes(totalMin);
+    // keep legacy serviceId as first selected
+    setServiceId((next.length ? next : [id])[0]);
+    // refresh slots
+    setTimeout(() => loadSlots(undefined, undefined, totalMin), 0);
+    return next.length ? next : [id];
+  });
+}
+
+function fmtMoney(cents: number, currency: string) {
+  const v = (Number(cents || 0) / 100).toFixed(2).replace(".", ",");
+  return `${v} ${currency}`;
+}
+
+async function loadSlots(nextDate?: string, nextStaffId?: string, nextMinutes?: number) {
     const d = nextDate ?? date;
     const sid = nextStaffId ?? staffId;
     const dur = nextMinutes ?? minutes;
@@ -123,9 +152,7 @@ export default function NewClient() {
       }
 
       const res = await fetch(
-        `/api/availability?date=${encodeURIComponent(d)}&staff_id=${encodeURIComponent(sid)}&duration=${encodeURIComponent(
-          String(dur)
-        )}&step=15`,
+        `/api/availability?date=${encodeURIComponent(d)}&staff_id=${encodeURIComponent(sid)}&duration=${encodeURIComponent(String(dur))}&service_ids=${encodeURIComponent(serviceIds.join(","))}&step=15`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
@@ -217,6 +244,8 @@ export default function NewClient() {
     }
   }
 
+    const totals = calcTotals(serviceIds);
+
   return (
     <div
       style={{
@@ -281,6 +310,9 @@ export default function NewClient() {
             <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
               Formato: +351… (o sistema normaliza para WhatsApp automaticamente)
             </div>
+            <div style={{ marginTop: 10, fontSize: 13, fontWeight: 900, opacity: 0.85 }}>
+              Total: {totals.totalMin}min{totals.totalCents ? ` · ${fmtMoney(totals.totalCents, totals.currency)}` : ""}
+            </div>
 
             <div style={{ height: 12 }} />
 
@@ -310,31 +342,35 @@ export default function NewClient() {
 
             <div style={{ height: 12 }} />
 
-            <label style={{ fontSize: 13, fontWeight: 700 }}>Serviço</label>
-            <select
-              style={{ ...inputStyle, marginTop: 6 }}
-              value={serviceId}
-              onChange={(e) => {
-                const v = e.target.value;
-                setServiceId(v);
-                const s = services.find((x) => x.id === v);
-                if (s?.duration_minutes) {
-                  setMinutes(s.duration_minutes);
-                  loadSlots(undefined, undefined, s.duration_minutes);
-                }
-              }}
-              disabled={!services.length}
-            >
-              {services.length ? (
-                services.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} ({s.duration_minutes} min)
-                  </option>
-                ))
-              ) : (
-                <option value="">Sem serviços</option>
-              )}
-            </select>
+            <label style={{ fontSize: 13, fontWeight: 800 }}>Serviços (pode escolher mais de um)</label>
+<div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+  {services.map((s) => {
+    const checked = serviceIds.includes(s.id);
+    return (
+      <label
+        key={s.id}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "10px 12px",
+          borderRadius: 12,
+          border: "1px solid rgba(2,6,23,0.10)",
+          background: checked ? "rgba(2,6,23,0.04)" : "rgba(255,255,255,0.9)",
+          cursor: "pointer",
+        }}
+      >
+        <input type="checkbox" checked={checked} onChange={() => toggleService(s.id)} />
+        <div style={{ display: "grid" }}>
+          <div style={{ fontWeight: 900, fontSize: 13 }}>{s.name}</div>
+          <div style={{ fontSize: 12, opacity: 0.75 }}>
+            {s.duration_minutes}min{typeof s.price_cents === "number" ? ` · ${fmtMoney(s.price_cents, s.currency ?? "EUR")}` : ""}
+          </div>
+        </div>
+      </label>
+    );
+  })}
+</div>
 
 <div style={{ height: 12 }} />
 

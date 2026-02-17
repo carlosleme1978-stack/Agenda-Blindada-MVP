@@ -104,7 +104,48 @@ export async function POST(req: Request) {
     if (isNaN(start.getTime())) return new NextResponse("startISO inválido", { status: 400 });
     const end = new Date(start.getTime() + durationMinutes * 60000);
 
-    // Pick service
+    
+    // ✅ Bloqueio de horário duplicado (server-side)
+    const { data: clashRows, error: clashErr } = await admin
+      .from("appointments")
+      .select("id,start_time,end_time,status")
+      .eq("company_id", companyId)
+      .eq("staff_id", staffId)
+      .in("status", ["BOOKED", "CONFIRMED", "PENDING"])
+      .lt("start_time", end.toISOString())
+      .gt("end_time", start.toISOString())
+      .limit(1);
+
+    if (clashErr) return new NextResponse(clashErr.message, { status: 400 });
+    if ((clashRows ?? []).length) {
+      return new NextResponse("Este horário já está ocupado para este staff. Escolha outro horário.", { status: 409 });
+    }
+
+// Pick service(s)
+    const rawServiceIds = (body as any).serviceIds ?? (body as any).service_ids ?? null;
+    const serviceIds = Array.isArray(rawServiceIds)
+      ? rawServiceIds.map((s: any) => String(s).trim()).filter((s: string) => s.length)
+      : String(rawServiceIds ?? "").split(",").map((s: string) => s.trim()).filter((s: string) => s.length);
+
+    const primaryServiceId = String((body as any).service_id ?? (body as any).serviceId ?? "").trim();
+    const finalServiceIds = (serviceIds && serviceIds.length) ? serviceIds : (primaryServiceId ? [primaryServiceId] : []);
+
+    if (!finalServiceIds.length) return new NextResponse("Service obrigatório.", { status: 400 });
+
+    const { data: pickedServices, error: psErr } = await admin
+      .from("services")
+      .select("id,name,duration_minutes,price_cents,currency")
+      .in("id", finalServiceIds)
+      .eq("active", true);
+
+    if (psErr) return new NextResponse(psErr.message, { status: 400 });
+    if (!pickedServices || pickedServices.length === 0) return new NextResponse("Service inválido.", { status: 400 });
+
+    const totalMinutes = pickedServices.reduce((a: number, s: any) => a + Number(s.duration_minutes ?? 0), 0) || 30;
+    const totalCents = pickedServices.reduce((a: number, s: any) => a + Number(s.price_cents ?? 0), 0);
+    const currency = String((pickedServices[0] as any).currency ?? "EUR");
+
+
     let serviceId: string | null = String(body.serviceId ?? "").trim() || null;
     if (!serviceId) {
       const { data: sv } = await admin
@@ -127,7 +168,7 @@ export async function POST(req: Request) {
         end_time: end.toISOString(),
         status: "BOOKED",
         staff_id: staffId,
-        service_id: serviceId,
+        service_id: String(pickedServices[0].id),
         customer_name_snapshot: customerName,
       })
       .select("id")
