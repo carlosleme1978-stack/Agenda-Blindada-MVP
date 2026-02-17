@@ -677,7 +677,7 @@ export async function POST(req: NextRequest) {
       .eq("company_id", companyId)
       .gte("start_time", dayStart)
       .lte("start_time", dayEnd)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)");
+      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,CONFIRMED)");
 
     if (staffId) q = (q as any).eq("staff_id", staffId);
 
@@ -693,7 +693,7 @@ export async function POST(req: NextRequest) {
       .from("appointments")
       .select("*", { count: "exact", head: true })
       .eq("company_id", companyId)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
+      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,CONFIRMED)")
       .lt("start_time", endISO)
       .gt("end_time", startISO);
 
@@ -841,7 +841,7 @@ export async function POST(req: NextRequest) {
       .select("id,start_time,status")
       .eq("company_id", companyId)
       .eq("customer_id", customer.id)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
+      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,CONFIRMED)")
       .gte("start_time", new Date().toISOString())
       .order("start_time", { ascending: true })
       .limit(1)
@@ -972,7 +972,7 @@ export async function POST(req: NextRequest) {
       .eq("company_id", companyId)
       .gte("start_time", dayStart)
       .lte("start_time", dayEnd)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)");
+      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,CONFIRMED)");
 
     let free = allSlots.filter((s) => {
       const used = (dayAppts || []).filter((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time)).length;
@@ -1024,7 +1024,7 @@ export async function POST(req: NextRequest) {
       .select("id,status,start_time")
       .eq("company_id", companyId)
       .eq("customer_id", customer.id)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
+      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,CONFIRMED)")
       .gte("start_time", new Date().toISOString())
       .order("start_time", { ascending: true })
       .limit(1)
@@ -1290,7 +1290,7 @@ const totalMinutes = picks.reduce((a: number, s: any) => a + Number(s.duration_m
 const totalCents = picks.reduce((a: number, s: any) => a + Number(s.price_cents ?? 0), 0);
 const names = picks.map((s: any) => String(s.name ?? "")).filter(Boolean);
 
-const nextCtx = {
+const nextCtx2 = {
   ...ctx,
   service_id: picks[0].id,
   service_ids: picks.map((s: any) => s.id),
@@ -1302,15 +1302,15 @@ const nextCtx = {
 };
 
     if (COMPANY_PLAN === "pro" && (ACTIVE_STAFF?.length ?? 0) > 1) {
-      return await sendStaffMenu(nextCtx);
+      return await sendStaffMenu(nextCtx2);
     }
 
-    await setSession("ASK_DAY", nextCtx);
+    await setSession("ASK_DAY", nextCtx2);
 
-    const price = formatPriceEur(nextCtx.price_cents_total ?? 0);
+    const price = formatPriceEur(nextCtx2.price_cents_total ?? 0);
     const pricePart = price ? ` (${price})` : "";
 
-    await replyAndLog(`✅ Serviço: *${nextCtx.service_name}* (${nextCtx.duration_minutes}min)${pricePart}\nAgora diz-me o dia (HOJE, AMANHÃ ou 10/02).`, {
+    await replyAndLog(`✅ Serviço: *${nextCtx2.service_name}* (${nextCtx2.duration_minutes}min)${pricePart}\nAgora diz-me o dia (HOJE, AMANHÃ ou 10/02).`, {
       step: "day",
     });
 
@@ -1483,8 +1483,10 @@ if (apptId && pickedIds.length > 1) {
     });
 
     const svcLine = ctx?.service_name ? `\nServiço: *${ctx.service_name}*` : "";
+    const durLine = ctx?.duration_minutes ? `\nDuração: *${ctx.duration_minutes}min*` : "";
+    const priceLine = (ctx as any)?.price_cents_total ? `\nTotal: *${formatPriceEur((ctx as any).price_cents_total)}*` : "";
     await replyAndLog(
-      `Combinado ✅\nFicou pré-reservado para *${formatDatePt(isoDate)}* às *${chosen.label}*.${svcLine}\n\nConfirmas? Responde *SIM* ou *NÃO*.`,
+      `Combinado ✅\nFicou pré-reservado para *${formatDatePt(isoDate)}* às *${chosen.label}*.${svcLine}${durLine}${priceLine}\n\nConfirmas? Responde *SIM* ou *NÃO*.`,
       { step: "confirm", appointment_id: apptId }
     );
 

@@ -73,11 +73,7 @@ export async function GET(req: Request) {
 
     const userId = userRes.user.id;
 
-    const { data: prof } = await admin
-      .from("profiles")
-      .select("company_id,role,staff_id")
-      .eq("id", userId)
-      .single();
+    const { data: prof } = await admin.from("profiles").select("company_id,role,staff_id").eq("id", userId).single();
 
     const companyId = prof?.company_id as string | undefined;
     if (!companyId) return NextResponse.json({ error: "Sem company" }, { status: 400 });
@@ -126,8 +122,8 @@ export async function GET(req: Request) {
         { status: 402 }
       );
     }
-    // Business hours por staff (configurável)
-// day range in UTC for query (00:00 - 24:00 local tz)
+
+    // day range in UTC for query (00:00 - 24:00 local tz)
     const dayStartUtc = zonedDateTimeToUtc(date, "00:00", timeZone);
     const dayEndUtc = zonedDateTimeToUtc(date, "23:59", timeZone);
 
@@ -152,29 +148,34 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: true, date, staff_id: staffId, timeZone, slots: [] });
     }
 
-
+    // IMPORTANT: enum status pode NÃO ter PENDING. Então: busca e filtra no JS.
     const { data: appts, error: aErr } = await admin
       .from("appointments")
-      .select("start_time,end_time,status,service_duration_minutes_snapshot")
+      .select("start_time,end_time,status,status_v2,service_duration_minutes_snapshot")
       .eq("company_id", companyId)
       .eq("staff_id", staffId)
-      .in("status", ["BOOKED", "CONFIRMED", "PENDING"])
       .lt("start_time", dayEndUtc.toISOString())
       .gt("end_time", dayStartUtc.toISOString());
 
     if (aErr) return NextResponse.json({ error: aErr.message }, { status: 400 });
 
+    const ACTIVE_V2 = new Set(["PENDING", "CONFIRMED"]);
+    const ACTIVE_ENUM = new Set(["BOOKED", "CONFIRMED"]);
+
     const busy = (appts ?? [])
-      .map((a: any) => ({
-        s: new Date(a.start_time).getTime(),
-        e: (a.end_time ? new Date(a.end_time).getTime() : (new Date(a.start_time).getTime() + (Number((a as any).service_duration_minutes_snapshot ?? durationMinutes) * 60_000))),
-      }))
+      .filter((a: any) => ACTIVE_V2.has(String(a.status_v2 ?? "")) || ACTIVE_ENUM.has(String(a.status ?? "")))
+      .map((a: any) => {
+        const s = new Date(a.start_time).getTime();
+        const e = a.end_time
+          ? new Date(a.end_time).getTime()
+          : new Date(a.start_time).getTime() + Number(a.service_duration_minutes_snapshot ?? durationMinutes) * 60_000;
+        return { s, e };
+      })
       .filter((x) => Number.isFinite(x.s) && Number.isFinite(x.e));
 
     // Generate slots in local tz, return startISO in UTC
     const slots: { label: string; startISO: string }[] = [];
 
-    // iterate local minutes
     const [oh, om] = open.split(":").map(Number);
     const [ch, cm] = close.split(":").map(Number);
     const openMin = oh * 60 + om;
@@ -188,26 +189,11 @@ export async function GET(req: Request) {
       const sUtc = zonedDateTimeToUtc(date, t, timeZone);
       const eUtc = new Date(sUtc.getTime() + durationMinutes * 60_000);
 
-      const sMs = sUtc.getTime();
-      const eMs = eUtc.getTime();
-
-      const clash = busy.some((b) => overlap(sMs, eMs, b.s, b.e));
-      if (!clash) {
-        slots.push({ label: t, startISO: sUtc.toISOString() });
-      }
+      const clash = busy.some((b) => overlap(sUtc.getTime(), eUtc.getTime(), b.s, b.e));
+      if (!clash) slots.push({ label: t, startISO: sUtc.toISOString() });
     }
 
-    return NextResponse.json({
-      ok: true,
-      date,
-      staff_id: staffId,
-      timeZone,
-      open,
-      close,
-      durationMinutes,
-      stepMinutes,
-      slots,
-    });
+    return NextResponse.json({ ok: true, date, staff_id: staffId, timeZone, open, close, durationMinutes, stepMinutes, slots });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Erro" }, { status: 500 });
   }

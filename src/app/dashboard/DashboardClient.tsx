@@ -162,6 +162,9 @@ export default function DashboardClient({ initial }: { initial: DashboardInitial
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <Link href="/dashboard/new" style={{ textDecoration: "none", fontWeight: 900, color: "white", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.20)" }}>
+                + Nova marcação
+              </Link>
               <Link href="/dashboard/agenda" style={{ textDecoration: "none", fontWeight: 900, color: "white", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.20)" }}>
                 Abrir Agenda
               </Link>
@@ -170,6 +173,9 @@ export default function DashboardClient({ initial }: { initial: DashboardInitial
               </Link>
               <Link href="/dashboard/staff" style={{ textDecoration: "none", fontWeight: 900, color: "white", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.20)" }}>
                 Staff
+              </Link>
+              <Link href="/dashboard/services" style={{ textDecoration: "none", fontWeight: 900, color: "white", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.20)" }}>
+                Serviços
               </Link>
             </div>
           </div>

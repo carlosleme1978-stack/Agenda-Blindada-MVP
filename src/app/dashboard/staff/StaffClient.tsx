@@ -35,6 +35,18 @@ type StaffOccupancy = {
   available_minutes: number | null;
 };
 
+function fmtEuro(cents?: number | null) {
+  const v = Number(cents ?? 0) / 100;
+  return v.toLocaleString("pt-PT", { style: "currency", currency: "EUR" });
+}
+
+function pct(booked?: number | null, avail?: number | null) {
+  const b = Number(booked ?? 0);
+  const a = Number(avail ?? 0);
+  if (!a) return "—";
+  return `${Math.round((b / a) * 100)}%`;
+}
+
 export default function StaffClient(props: {
   initialCompany: Company;
   initialStaff: StaffRow[];
@@ -46,8 +58,8 @@ export default function StaffClient(props: {
   const [company] = useState<Company>(props.initialCompany);
   const [staff, setStaff] = useState<StaffRow[]>(props.initialStaff);
 
-  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   const [hoursOpen, setHoursOpen] = useState(false);
@@ -60,67 +72,51 @@ export default function StaffClient(props: {
 
   const finMap = useMemo(() => {
     const m = new Map<string, StaffFinancial>();
-    for (const r of props.initialFinancial ?? []) m.set(r.staff_id, r);
+    for (const r of props.initialFinancial ?? []) m.set(String(r.staff_id), r);
     return m;
   }, [props.initialFinancial]);
 
   const occMap = useMemo(() => {
     const m = new Map<string, StaffOccupancy>();
-    for (const r of props.initialOccupancy ?? []) m.set(r.staff_id, r);
+    for (const r of props.initialOccupancy ?? []) m.set(String(r.staff_id), r);
     return m;
   }, [props.initialOccupancy]);
 
   const input: React.CSSProperties = {
     width: "100%",
     padding: "12px 12px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: "rgba(0,0,0,0.25)",
-    color: "#fff",
+    borderRadius: 14,
+    border: "1px solid rgba(2,6,23,0.10)",
+    background: "rgba(255,255,255,0.92)",
+    color: "#0b1220",
     outline: "none",
+    fontWeight: 800,
   };
 
-  function fmtEuro(cents?: number | null) {
-    const v = Number(cents ?? 0) / 100;
-    return v.toLocaleString(undefined, { style: "currency", currency: "EUR" });
-  }
+  async function authedJson(url: string, body: any) {
+    const { data: sess } = await sb.auth.getSession();
+    const token = sess.session?.access_token;
+    if (!token) throw new Error("Faça login novamente.");
 
-  function fmtPct(num: number) {
-    return (num * 100).toFixed(0) + "%";
-  }
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    });
 
-  function occupancyFor(staffId: string) {
-    const o = occMap.get(staffId);
-    const booked = Number(o?.booked_minutes ?? 0);
-    const avail = Number(o?.available_minutes ?? 0);
-    if (!avail || avail <= 0) return { rate: 0, label: "—" };
-    const rate = booked / avail;
-    return { rate, label: fmtPct(rate) };
+    const json = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(json?.error || "Falha.");
+    return json;
   }
 
   async function add() {
     setMsg(null);
-    if (!company?.id) return;
-
     const nm = name.trim();
     if (!nm) return setMsg("Informe o nome.");
 
     setSaving(true);
     try {
-      const { data: sess } = await sb.auth.getSession();
-      const token = sess.session?.access_token;
-      if (!token) throw new Error("Faça login novamente.");
-
-      const res = await fetch("/api/staff/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name: nm, phone: phone.trim() || null, role: role.trim() || "staff" }),
-      });
-
-      const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error || "Falha ao criar staff.");
-
-      // Update UI optimistically
+      const json = await authedJson("/api/staff/create", { name: nm, phone: phone.trim() || null, role: role.trim() || "staff" });
       setStaff((prev) => [...prev, json.staff].sort((a, b) => (a.created_at || "").localeCompare(b.created_at || "")));
       setName("");
       setPhone("");
@@ -137,19 +133,7 @@ export default function StaffClient(props: {
     setMsg(null);
     setSaving(true);
     try {
-      const { data: sess } = await sb.auth.getSession();
-      const token = sess.session?.access_token;
-      if (!token) throw new Error("Faça login novamente.");
-
-      const res = await fetch("/api/staff/toggle", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ staff_id: s.id, active: !s.active }),
-      });
-
-      const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error || "Falha ao atualizar staff.");
-
+      await authedJson("/api/staff/toggle", { staff_id: s.id, active: !s.active });
       setStaff((prev) => prev.map((x) => (x.id === s.id ? { ...x, active: !x.active } : x)));
       setMsg("Atualizado.");
     } catch (e: any) {
@@ -163,19 +147,7 @@ export default function StaffClient(props: {
     setMsg(null);
     setLoading(true);
     try {
-      const { data: sess } = await sb.auth.getSession();
-      const token = sess.session?.access_token;
-      if (!token) throw new Error("Faça login novamente.");
-
-      const res = await fetch("/api/staff/hours", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ staff_id: s.id, action: "get" }),
-      });
-
-      const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error || "Falha ao carregar horários.");
-
+      const json = await authedJson("/api/staff/hours", { staff_id: s.id, action: "get" });
       setHoursStaff(s);
       setHours(json.hours ?? []);
       setHoursOpen(true);
@@ -191,19 +163,7 @@ export default function StaffClient(props: {
     setMsg(null);
     setSaving(true);
     try {
-      const { data: sess } = await sb.auth.getSession();
-      const token = sess.session?.access_token;
-      if (!token) throw new Error("Faça login novamente.");
-
-      const res = await fetch("/api/staff/hours", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ staff_id: hoursStaff.id, action: "set", hours }),
-      });
-
-      const json = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(json?.error || "Falha ao salvar horários.");
-
+      await authedJson("/api/staff/hours", { staff_id: hoursStaff.id, action: "set", hours });
       setMsg("Horários salvos.");
       setHoursOpen(false);
       setHoursStaff(null);
@@ -215,207 +175,194 @@ export default function StaffClient(props: {
   }
 
   const rows = useMemo(() => {
-    return staff.map((s) => {
-      const f = finMap.get(s.id);
-      const o = occupancyFor(s.id);
-      return {
-        ...s,
-        revenue: fmtEuro(f?.revenue_realized_cents),
-        ticket: fmtEuro(f?.avg_ticket_cents),
-        noShow: Number(f?.total_no_show ?? 0),
-        completed: Number(f?.total_completed ?? 0),
-        occupancy: o.label,
-        occupancyRate: o.rate,
-      };
-    });
+    return staff
+      .map((s) => {
+        const f = finMap.get(String(s.id));
+        const o = occMap.get(String(s.id));
+        return {
+          ...s,
+          revenueReal: fmtEuro(f?.revenue_realized_cents),
+          revenueExpected: fmtEuro(f?.revenue_expected_cents),
+          ticket: fmtEuro(f?.avg_ticket_cents),
+          noShow: Number(f?.total_no_show ?? 0),
+          completed: Number(f?.total_completed ?? 0),
+          occ: pct(o?.booked_minutes, o?.available_minutes),
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
   }, [staff, finMap, occMap]);
 
   return (
-    <div style={{ padding: 18, maxWidth: 1200, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16 }}>
-        <div>
-          <div style={{ fontSize: 18, fontWeight: 800 }}>Staff</div>
-          <div style={{ opacity: 0.8, fontSize: 13 }}>{company?.name ?? ""}</div>
+    <main style={{ minHeight: "100vh", padding: 18, background: "linear-gradient(180deg, rgba(15,23,42,0.06) 0%, rgba(15,23,42,0.00) 45%), radial-gradient(1200px 600px at 15% -10%, rgba(139,92,246,0.25), transparent 60%), radial-gradient(900px 500px at 100% 0%, rgba(59,130,246,0.18), transparent 60%)" }}>
+      <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 950 }}>STAFF · Gestão premium</div>
+            <div style={{ fontSize: 26, fontWeight: 950, letterSpacing: -0.6 }}>Equipe</div>
+            <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8, fontWeight: 700 }}>{company?.name ?? ""}</div>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <Link href="/dashboard" style={{ textDecoration: "none", fontWeight: 900, padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(2,6,23,0.10)", background: "rgba(255,255,255,0.85)" }}>
+              ← Voltar
+            </Link>
+            <Link href="/dashboard/services" style={{ textDecoration: "none", fontWeight: 900, padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(2,6,23,0.10)", background: "rgba(255,255,255,0.85)" }}>
+              Serviços & Categorias
+            </Link>
+          </div>
         </div>
-        <Link href="/dashboard" style={{ opacity: 0.9, textDecoration: "none" }}>
-          ← Voltar
-        </Link>
-      </div>
 
-      {msg ? (
-        <div style={{ marginBottom: 12, padding: 12, borderRadius: 12, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)" }}>
-          {msg}
-        </div>
-      ) : null}
+        {msg ? (
+          <div style={{ marginTop: 12, padding: 12, borderRadius: 14, background: "rgba(255,255,255,0.90)", border: "1px solid rgba(2,6,23,0.10)", fontWeight: 800 }}>
+            {msg}
+          </div>
+        ) : null}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
-        <input style={input} placeholder="Nome" value={name} onChange={(e) => setName(e.target.value)} />
-        <input style={input} placeholder="Telefone" value={phone} onChange={(e) => setPhone(e.target.value)} />
-        <select style={input as any} value={role} onChange={(e) => setRole(e.target.value)}>
-          <option value="staff">Staff</option>
-          <option value="admin">Admin</option>
-        </select>
-      </div>
+        <section style={{ marginTop: 14, padding: 14, borderRadius: 18, background: "rgba(255,255,255,0.92)", border: "1px solid rgba(2,6,23,0.10)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 950 }}>Adicionar staff</div>
+              <div style={{ fontSize: 16, fontWeight: 950 }}>Novo membro</div>
+            </div>
+            {loading ? <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Carregando…</div> : null}
+          </div>
 
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16 }}>
-        <button
-          onClick={add}
-          disabled={saving}
-          style={{
-            padding: "12px 14px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,0.14)",
-            background: "rgba(145, 92, 255, 0.18)",
-            color: "#fff",
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
-        >
-          + Adicionar
-        </button>
-        {loading ? <span style={{ opacity: 0.8 }}>Carregando…</span> : null}
-      </div>
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1.2fr 1fr 220px 140px", gap: 10 }}>
+            <input style={input} placeholder="Nome" value={name} onChange={(e) => setName(e.target.value)} />
+            <input style={input} placeholder="Telefone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <select style={input as any} value={role} onChange={(e) => setRole(e.target.value)}>
+              <option value="staff">Staff</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button
+              onClick={add}
+              disabled={saving}
+              style={{
+                padding: "12px 12px",
+                borderRadius: 14,
+                border: "1px solid rgba(2,6,23,0.10)",
+                background: "linear-gradient(135deg, rgba(139,92,246,0.18), rgba(59,130,246,0.16))",
+                fontWeight: 950,
+                cursor: "pointer",
+              }}
+            >
+              + Criar
+            </button>
+          </div>
+        </section>
 
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-          <thead>
-            <tr style={{ textAlign: "left" }}>
-              <th style={{ padding: 12, borderBottom: "1px solid rgba(255,255,255,0.10)" }}>Nome</th>
-              <th style={{ padding: 12, borderBottom: "1px solid rgba(255,255,255,0.10)" }}>Ativo</th>
-              <th style={{ padding: 12, borderBottom: "1px solid rgba(255,255,255,0.10)" }}>Receita</th>
-              <th style={{ padding: 12, borderBottom: "1px solid rgba(255,255,255,0.10)" }}>Ticket</th>
-              <th style={{ padding: 12, borderBottom: "1px solid rgba(255,255,255,0.10)" }}>Ocupação</th>
-              <th style={{ padding: 12, borderBottom: "1px solid rgba(255,255,255,0.10)" }}>No-show</th>
-              <th style={{ padding: 12, borderBottom: "1px solid rgba(255,255,255,0.10)" }}>Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((s) => (
-              <tr key={s.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                <td style={{ padding: 12 }}>
-                  <div style={{ fontWeight: 800 }}>{s.name}</div>
-                  <div style={{ opacity: 0.75, fontSize: 12 }}>{s.phone ?? ""}</div>
-                </td>
-                <td style={{ padding: 12 }}>
-                  <span style={{ padding: "6px 10px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.14)", background: s.active ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)" }}>
+        <section style={{ marginTop: 14, borderRadius: 18, overflow: "hidden", border: "1px solid rgba(2,6,23,0.10)", background: "rgba(255,255,255,0.92)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1.2fr 110px 150px 150px 110px 90px 1fr", gap: 10, padding: "12px 14px", fontSize: 12, fontWeight: 950, opacity: 0.7, borderBottom: "1px solid rgba(2,6,23,0.08)" }}>
+            <div>Nome</div>
+            <div>Ativo</div>
+            <div>Receita</div>
+            <div>Prevista</div>
+            <div>Ticket</div>
+            <div>No-show</div>
+            <div>Ações</div>
+          </div>
+
+          {rows.length === 0 ? (
+            <div style={{ padding: 14, opacity: 0.7 }}>Nenhum staff cadastrado.</div>
+          ) : (
+            rows.map((s) => (
+              <div key={s.id} style={{ display: "grid", gridTemplateColumns: "1.2fr 110px 150px 150px 110px 90px 1fr", gap: 10, padding: "12px 14px", borderBottom: "1px solid rgba(2,6,23,0.06)", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontWeight: 950 }}>{s.name}</div>
+                  <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 800 }}>{s.phone ?? ""}</div>
+                  <div style={{ fontSize: 12, opacity: 0.65, fontWeight: 800 }}>Ocupação (28d): {s.occ}</div>
+                </div>
+                <div>
+                  <span style={{ padding: "6px 10px", borderRadius: 999, border: "1px solid rgba(2,6,23,0.10)", background: s.active ? "rgba(34,197,94,0.10)" : "rgba(239,68,68,0.10)", fontWeight: 950 }}>
                     {s.active ? "Ativo" : "Inativo"}
                   </span>
-                </td>
-                <td style={{ padding: 12 }}>{s.revenue}</td>
-                <td style={{ padding: 12 }}>{s.ticket}</td>
-                <td style={{ padding: 12 }}>{s.occupancy}</td>
-                <td style={{ padding: 12 }}>{s.noShow}</td>
-                <td style={{ padding: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button
-                    onClick={() => toggle(s)}
-                    disabled={saving}
-                    style={{
-                      padding: "10px 12px",
-                      borderRadius: 12,
-                      border: "1px solid rgba(255,255,255,0.14)",
-                      background: "rgba(255,255,255,0.06)",
-                      color: "#fff",
-                      cursor: "pointer",
-                    }}
+                </div>
+                <div style={{ fontWeight: 950 }}>{s.revenueReal}</div>
+                <div style={{ fontWeight: 950 }}>{s.revenueExpected}</div>
+                <div style={{ fontWeight: 950 }}>{s.ticket}</div>
+                <div style={{ fontWeight: 950 }}>{s.noShow}</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <Link
+                    href={`/dashboard/staff-view/${encodeURIComponent(s.id)}`}
+                    style={{ textDecoration: "none", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(2,6,23,0.10)", background: "rgba(2,6,23,0.04)", fontWeight: 950 }}
                   >
-                    {s.active ? "Desativar" : "Ativar"}
-                  </button>
+                    Agenda
+                  </Link>
                   <button
                     onClick={() => openHours(s)}
                     disabled={saving || loading}
-                    style={{
-                      padding: "10px 12px",
-                      borderRadius: 12,
-                      border: "1px solid rgba(255,255,255,0.14)",
-                      background: "rgba(59,130,246,0.10)",
-                      color: "#fff",
-                      cursor: "pointer",
-                    }}
+                    style={{ padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(2,6,23,0.10)", background: "rgba(59,130,246,0.10)", fontWeight: 950, cursor: "pointer" }}
                   >
                     Horários
                   </button>
-                </td>
-              </tr>
-            ))}
-            {!rows.length ? (
-              <tr>
-                <td colSpan={7} style={{ padding: 14, opacity: 0.75 }}>
-                  Nenhum staff cadastrado.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
-
-      {hoursOpen && hoursStaff ? (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
-          <div style={{ width: 720, maxWidth: "100%", borderRadius: 16, border: "1px solid rgba(255,255,255,0.14)", background: "#0B0B12", padding: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <div style={{ fontWeight: 900 }}>Horários — {hoursStaff.name}</div>
-              <button
-                onClick={() => {
-                  setHoursOpen(false);
-                  setHoursStaff(null);
-                }}
-                style={{ padding: "8px 10px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.06)", color: "#fff" }}
-              >
-                Fechar
-              </button>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "120px 1fr 1fr 90px", gap: 10, fontSize: 12, opacity: 0.85, padding: "6px 0" }}>
-              <div>Dia</div>
-              <div>Início</div>
-              <div>Fim</div>
-              <div>Ativo</div>
-            </div>
-
-            {hours.map((h, idx) => (
-              <div key={idx} style={{ display: "grid", gridTemplateColumns: "120px 1fr 1fr 90px", gap: 10, alignItems: "center", padding: "8px 0" }}>
-                <div style={{ opacity: 0.9 }}>{["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"][h.day_of_week]}</div>
-                <input
-                  style={input}
-                  value={h.start_time}
-                  onChange={(e) =>
-                    setHours((prev) => prev.map((x, i) => (i === idx ? { ...x, start_time: e.target.value } : x)))
-                  }
-                />
-                <input
-                  style={input}
-                  value={h.end_time}
-                  onChange={(e) =>
-                    setHours((prev) => prev.map((x, i) => (i === idx ? { ...x, end_time: e.target.value } : x)))
-                  }
-                />
-                <input
-                  type="checkbox"
-                  checked={h.active}
-                  onChange={(e) => setHours((prev) => prev.map((x, i) => (i === idx ? { ...x, active: e.target.checked } : x)))}
-                />
+                  <button
+                    onClick={() => toggle(s)}
+                    disabled={saving}
+                    style={{ padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(2,6,23,0.10)", background: s.active ? "rgba(239,68,68,0.10)" : "rgba(34,197,94,0.10)", fontWeight: 950, cursor: "pointer" }}
+                  >
+                    {s.active ? "Desativar" : "Ativar"}
+                  </button>
+                </div>
               </div>
-            ))}
+            ))
+          )}
+        </section>
 
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 12 }}>
-              <button
-                onClick={saveHours}
-                disabled={saving}
-                style={{
-                  padding: "12px 14px",
-                  borderRadius: 12,
-                  border: "1px solid rgba(255,255,255,0.14)",
-                  background: "rgba(34,197,94,0.14)",
-                  color: "#fff",
-                  fontWeight: 800,
-                  cursor: "pointer",
-                }}
-              >
-                Salvar
-              </button>
+        {hoursOpen && hoursStaff ? (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(2,6,23,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+            <div style={{ width: 760, maxWidth: "100%", borderRadius: 18, border: "1px solid rgba(255,255,255,0.18)", background: "linear-gradient(135deg, rgba(15,23,42,0.95), rgba(2,6,23,0.92))", color: "white", padding: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 900 }}>Horários</div>
+                  <div style={{ fontSize: 18, fontWeight: 950 }}>{hoursStaff.name}</div>
+                </div>
+                <button
+                  onClick={() => {
+                    setHoursOpen(false);
+                    setHoursStaff(null);
+                  }}
+                  style={{ padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(0,0,0,0.20)", color: "white", fontWeight: 900, cursor: "pointer" }}
+                >
+                  Fechar
+                </button>
+              </div>
+
+              <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "120px 1fr 1fr 90px", gap: 10, fontSize: 12, opacity: 0.85, fontWeight: 900 }}>
+                <div>Dia</div>
+                <div>Início</div>
+                <div>Fim</div>
+                <div>Ativo</div>
+              </div>
+
+              {hours.map((h, idx) => (
+                <div key={idx} style={{ marginTop: 10, display: "grid", gridTemplateColumns: "120px 1fr 1fr 90px", gap: 10, alignItems: "center" }}>
+                  <div style={{ fontWeight: 900 }}>{["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"][h.day_of_week]}</div>
+                  <input
+                    style={{ ...input, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.16)", color: "white" }}
+                    value={h.start_time}
+                    onChange={(e) => setHours((prev) => prev.map((x, i) => (i === idx ? { ...x, start_time: e.target.value } : x)))}
+                  />
+                  <input
+                    style={{ ...input, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.16)", color: "white" }}
+                    value={h.end_time}
+                    onChange={(e) => setHours((prev) => prev.map((x, i) => (i === idx ? { ...x, end_time: e.target.value } : x)))}
+                  />
+                  <input type="checkbox" checked={h.active} onChange={(e) => setHours((prev) => prev.map((x, i) => (i === idx ? { ...x, active: e.target.checked } : x)))} />
+                </div>
+              ))}
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
+                <button
+                  onClick={saveHours}
+                  disabled={saving}
+                  style={{ padding: "12px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(34,197,94,0.16)", color: "white", fontWeight: 950, cursor: "pointer" }}
+                >
+                  Salvar
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      ) : null}
-    </div>
+        ) : null}
+      </div>
+    </main>
   );
 }

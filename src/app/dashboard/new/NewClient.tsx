@@ -232,6 +232,7 @@ async function loadSlots(nextDate?: string, nextStaffId?: string, nextMinutes?: 
           durationMinutes: minutes,
           staffId: staffId || undefined,
           serviceId: serviceId || undefined,
+          serviceIds: serviceIds,
         }),
       });
 

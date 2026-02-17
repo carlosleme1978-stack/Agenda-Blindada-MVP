@@ -16,6 +16,7 @@ type AppointmentRow = {
   start_time: string;
   end_time: string | null;
   status: string;
+  status_v2?: string | null;
   customer_name_snapshot: string | null;
   customers?: { name: string | null; phone: string | null } | null;
 };
@@ -133,6 +134,7 @@ export default function StaffViewPage({ params }: { params: { id: string } }) {
             start_time,
             end_time,
             status,
+            status_v2,
             customer_name_snapshot,
             customers ( name, phone )
           `
@@ -144,15 +146,22 @@ export default function StaffViewPage({ params }: { params: { id: string } }) {
           .order("start_time", { ascending: true })
           .limit(500);
 
-        if (tab !== "ALL") q = (q as any).eq("status", tab);
-
         const { data: appts, error: qErr } = await (q as any);
         if (qErr) {
           setError("Não consegui carregar as marcações deste staff.");
           setLoading(false);
           return;
         }
-        setRows((appts ?? []) as any);
+        
+        const raw = (appts ?? []) as any[];
+        const effStatus = (r: any) => {
+          const v2 = String(r.status_v2 ?? "");
+          if (v2) return v2;
+          const st = String(r.status ?? "");
+          return st === "BOOKED" ? "PENDING" : st;
+        };
+        const filtered = tab === "ALL" ? raw : raw.filter((r) => effStatus(r) === tab);
+        setRows(filtered as any);
       } catch {
         setError("Erro inesperado ao carregar agenda do staff.");
       } finally {
@@ -174,9 +183,15 @@ export default function StaffViewPage({ params }: { params: { id: string } }) {
 
   const metrics = useMemo(() => {
     const total = rows.length;
-    const confirmed = rows.filter((r) => r.status === "CONFIRMED").length;
-    const pending = rows.filter((r) => r.status === "BOOKED" || r.status === "PENDING").length;
-    const cancelled = rows.filter((r) => r.status === "CANCELLED").length;
+    const eff = (r: any) => {
+      const v2 = String(r.status_v2 ?? "");
+      if (v2) return v2;
+      const st = String(r.status ?? "");
+      return st === "BOOKED" ? "PENDING" : st;
+    };
+    const confirmed = rows.filter((r) => eff(r) === "CONFIRMED").length;
+    const pending = rows.filter((r) => eff(r) === "PENDING").length;
+    const cancelled = rows.filter((r) => eff(r) === "CANCELLED").length;
     return { total, confirmed, pending, cancelled };
   }, [rows]);
 
@@ -261,12 +276,13 @@ export default function StaffViewPage({ params }: { params: { id: string } }) {
                 {list.map((r) => {
                   const cname = r.customer_name_snapshot || r.customers?.name || "Cliente";
                   const phone = r.customers?.phone || "";
+                  const sEff = String((r as any).status_v2 ?? "") || (String(r.status ?? "") === "BOOKED" ? "PENDING" : String(r.status ?? ""));
                   const badge =
-                    r.status === "CONFIRMED"
+                    sEff === "CONFIRMED"
                       ? "ok"
-                      : r.status === "CANCELLED"
+                      : sEff === "CANCELLED"
                       ? "bad"
-                      : r.status === "BOOKED" || r.status === "PENDING"
+                      : sEff === "PENDING"
                       ? "warn"
                       : "muted";
                   return (
