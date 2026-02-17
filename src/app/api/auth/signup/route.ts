@@ -123,20 +123,10 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: pErr.message }, { status: 400 });
       }
 
-      // Defaults
-      const { data: staff } = await admin
-        .from("staff")
-        .insert({ company_id: company.id, name: ownerName || "Dono", role: "owner", active: true })
-        .select("id")
-        .single();
-
+      // Defaults (MODELO SOLO: sem staff)
       await admin
         .from("services")
         .insert({ company_id: company.id, name: "Serviço", duration_minutes: 30, active: true });
-
-      if (staff?.id) {
-        await admin.from("profiles").update({ staff_id: staff.id }).eq("id", userRes.user.id);
-      }
 
       return NextResponse.json({ ok: true });
     }
@@ -226,21 +216,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Não foi possível consumir o código. Use outro código." }, { status: 409 });
     }
 
-    // 5) Create defaults (1 staff, 1 service)
-    const { data: staff } = await admin
-      .from("staff")
-      .insert({ company_id: company.id, name: ownerName || "Dono", role: "owner", active: true })
-      .select("id")
-      .single();
-
+    // 5) Defaults (MODELO SOLO: sem staff)
     await admin
       .from("services")
       .insert({ company_id: company.id, name: "Serviço", duration_minutes: 30, active: true });
-
-    // optional: attach staff_id to profile if staff row exists
-    if (staff?.id) {
-      await admin.from("profiles").update({ staff_id: staff.id }).eq("id", userRes.user.id);
-    }
 
     return NextResponse.json({ ok: true });
   } catch (e: any) {

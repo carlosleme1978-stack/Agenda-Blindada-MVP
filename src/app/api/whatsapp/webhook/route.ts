@@ -643,19 +643,10 @@ export async function POST(req: NextRequest) {
   const COMPANY_SCHEDULE = await getCompanySchedule();
 
   // ─────────────────────────────────────────────
-  // Plano e staff (PRO: perguntar qual staff)
+  // Modelo SOLO: sem staff
   // ─────────────────────────────────────────────
-  const { data: companyRow } = await db.from("companies").select("plan,staff_limit").eq("id", companyId).maybeSingle();
-  const COMPANY_PLAN = String((companyRow as any)?.plan ?? "basic").toLowerCase();
-
-  const { data: staffRows } = await db
-    .from("staff")
-    .select("id,name,active,created_at")
-    .eq("company_id", companyId)
-    .eq("active", true)
-    .order("created_at", { ascending: true });
-
-  const ACTIVE_STAFF = (staffRows ?? []) as any[];
+  const COMPANY_PLAN = "solo";
+  const ACTIVE_STAFF: any[] = [];
 
 
   function isSlotInLunchBreak(slot: { startISO: string; endISO: string }, isoDate: string) {
@@ -921,26 +912,41 @@ export async function POST(req: NextRequest) {
   async function processDaySelection(isoDate: string) {
     const duration = Number(ctx?.duration_minutes) || 30;
 
-    const { data: cfg, error: cfgErr } = await db
+    // Modelo SOLO: horários por dia (owner_working_hours)
+    const dayNum = isoDayNumberLisbon(isoDate);
+
+    const { data: cfg } = await db
       .from("companies")
-      .select("work_start, work_end, slot_step_minutes, work_days")
+      .select("slot_step_minutes")
       .eq("id", companyId)
       .maybeSingle();
 
-    if (cfgErr || !cfg) {
-      await replyAndLog("Ups… tive um problema a carregar os horários. Podes tentar novamente daqui a pouco?", {
-        step: "cfg_error",
-      });
-      return NextResponse.json({ ok: true });
-    }
+    const stepMinutes = Math.max(5, Number((cfg as any)?.slot_step_minutes ?? 15));
 
-    const workStart = cfg.work_start ?? "09:00";
-    const workEnd = cfg.work_end ?? "18:00";
-    const stepMinutes = Number(cfg.slot_step_minutes ?? 30) || 30;
-    const workDays: number[] = (cfg.work_days as any) ?? [1, 2, 3, 4, 5];
+    // owner_id (primeiro profile da company)
+    const { data: ownerProf } = await db
+      .from("profiles")
+      .select("id")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
-    const dayNum = isoDayNumberLisbon(isoDate);
-    if (!workDays.includes(dayNum)) {
+    const ownerId = (ownerProf as any)?.id as string | undefined;
+
+    const { data: wh } = ownerId
+      ? await db
+          .from("owner_working_hours")
+          .select("start_time,end_time,active")
+          .eq("owner_id", ownerId)
+          .eq("day_of_week", dayNum)
+          .maybeSingle()
+      : { data: null as any };
+
+    const workStart = (wh as any)?.active === false ? null : ((wh as any)?.start_time ?? "09:00");
+    const workEnd = (wh as any)?.active === false ? null : ((wh as any)?.end_time ?? "18:00");
+
+    if (!workStart || !workEnd) {
       await replyAndLog(`Nesse dia não atendemos 😊\nQueres escolher outro? (ex: AMANHÃ ou 10/02)`, {
         step: "day_not_allowed",
         isoDate,
@@ -949,502 +955,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    if (COMPANY_SCHEDULE.dailyLimit.enabled) {
-      const total = await countAppointmentsForDay(isoDate, ctx?.staff_id ?? null);
-      if (total >= COMPANY_SCHEDULE.dailyLimit.maxAppointments) {
-        await replyAndLog(
-          `📅 A agenda de ${formatDatePt(isoDate)} já está completa.\nQueres tentar outro dia? (ex: AMANHÃ ou 10/02)`,
-          { step: "daily_limit_block", isoDate, total }
-        );
-        return NextResponse.json({ ok: true });
-      }
-    }
-
-    let allSlots = buildSlotsForDay({
-      isoDate,
-      durationMinutes: duration,
-      stepMinutes,
-      workStart,
-      workEnd,
-    });
-
-    if (COMPANY_SCHEDULE.lunchBreak.enabled) {
-      allSlots = allSlots.filter((s) => !isSlotInLunchBreak(s, isoDate));
-    }
-
-    const dayStart = `${isoDate}T00:00:00.000Z`;
-    const dayEnd = `${isoDate}T23:59:59.999Z`;
-
-    const { data: dayAppts } = await db
-      .from("appointments")
-      .select("start_time,end_time,status,status_v2")
-      .eq("company_id", companyId)
-      .gte("start_time", dayStart)
-      .lte("start_time", dayEnd)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)");
-
-    let free = allSlots.filter((s) => {
-      const used = (dayAppts || []).filter((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time)).length;
-      return used < COMPANY_SCHEDULE.slotCapacity;
-    });
-
-    const todayIso = toISODateLisbon(new Date());
-    if (isoDate === todayIso) {
-      const nowHHMM = lisbonNowHHMM();
-      free = free.filter((s) => s.label > nowHHMM);
-    }
-
-    if (free.length === 0) {
-      await replyAndLog(`Nesse dia já não tenho horários disponíveis 😕\nQueres tentar outro dia? (ex: AMANHÃ ou 12/02)`, {
-        step: "no_slots",
-        isoDate,
-      });
-      return NextResponse.json({ ok: true });
-    }
-
-    const page = free.slice(0, 3);
-    const lines = page.map((s, i) => `${i + 1}) ${s.label}`).join("\n");
-
-    await setSession("SHOW_SLOTS", {
-      ...ctx,
-      isoDate,
-      offset: 0,
-      slots: free,
-    });
-
-    await replyAndLog(`📅 ${formatDatePt(isoDate)}\nTenho estes horários disponíveis:\n${lines}\n4) Ver mais`, {
-      step: "slots_page_0",
-      isoDate,
-      slotCapacity: COMPANY_SCHEDULE.slotCapacity,
-    });
-
-    return NextResponse.json({ ok: true });
-  }
-
-  // ─────────────────────────────────────────────
-  // Reiniciar fluxo (MARCAR/REAGENDAR) por intenção
-  // ─────────────────────────────────────────────
-  if (isIntentReschedule(text)) {
-    await clearSession();
-    await maybeWarnOutsideHours("reschedule");
-
-    const { data: nextAppt } = await db
-      .from("appointments")
-      .select("id,status,start_time")
-      .eq("company_id", companyId)
-      .eq("customer_id", customer.id)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
-      .gte("start_time", new Date().toISOString())
-      .order("start_time", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-
-    if (!customerHasName()) {
-      const header = "🔁 Vamos reagendar 😊\nPara continuarmos, qual é o teu *nome*, por favor?";
-      await setSession("ASK_NAME", {
-        next_action: "CATEGORY_MENU",
-        next_ctx: { mode: "RESCHEDULE", reschedule_from_appointment_id: nextAppt?.id ?? null, offset: 0 },
-        next_header: header,
-      });
-      await replyAndLog(header, { step: "ask_name" });
-      return NextResponse.json({ ok: true });
-    }
-
-    return await sendCategoryMenu(
-      { mode: "RESCHEDULE", reschedule_from_appointment_id: nextAppt?.id ?? null, offset: 0 },
-      0,
-      `🔁 Vamos reagendar, ${customer.name} 😊`
-    );
-  }
-
-  if (isIntentMark(text)) {
-    await clearSession();
-    await maybeWarnOutsideHours("new");
-
-    if (!customerHasName()) {
-      const header = "Perfeito 😊\nPara continuarmos a tua marcação, qual é o teu *nome*, por favor?";
-      await setSession("ASK_NAME", {
-        next_action: "CATEGORY_MENU",
-        next_ctx: { mode: "NEW", offset: 0 },
-        next_header: header,
-      });
-      await replyAndLog(header, { step: "ask_name" });
-      return NextResponse.json({ ok: true });
-    }
-
-    return await sendCategoryMenu({ mode: "NEW", offset: 0 }, 0, `Perfeito, ${customer.name} 😊`);
-  }
-
-  // ─────────────────────────────────────────────
-  // Confirmação SIM/NÃO
-  // ─────────────────────────────────────────────
-  if (isYesNo(text)) {
-    const yn = text === "NAO" ? "NÃO" : text;
-    const pendingId = ctx?.pending_appointment_id ?? null;
-
-    let appt: any = null;
-
-    if (pendingId) {
-      const r = await db.from("appointments").select("id,status,status_v2").eq("id", pendingId).maybeSingle();
-      appt = r.data ?? null;
-    }
-
-    if (!appt) {
-      const r = await (db as any)
-        .from("appointments")
-        .select("id,status,status_v2")
-        .eq("company_id", companyId)
-        .eq("customer_id", customer.id)
-        .or("status_v2.eq.PENDING,status.eq.BOOKED")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      appt = r.data ?? null;
-    }
-
-    if (!appt) return NextResponse.json({ ok: true });
-
-    const newStatus = yn === "SIM" ? "CONFIRMED" : "CANCELLED";
-    await db.from("appointments").update({ status: newStatus, status_v2: newStatus }).eq("id", appt.id);
-
-    const reply =
-      yn === "SIM"
-        ? "✅ Excelente! Está confirmado. Se precisares de alterar depois, é só dizer *REAGENDAR*."
-        : "Sem problema 🙂 Cancelei por aqui. Se quiseres, responde *QUERO MARCAR* para escolher outro horário.";
-
-    await replyAndLog(reply, { appointment_id: appt.id, flow: "confirm" });
-    await clearSession();
-    return NextResponse.json({ ok: true });
-  }
-
-  // ─────────────────────────────────────────────
-  // State machine
-  // ─────────────────────────────────────────────
-
-  // ✅ NOVO: ASK_NAME (primeira vez) — grava nome e continua o fluxo
-  if (state === "ASK_NAME") {
-    const proposed = normalizeNameInput(message.text.body || "");
-
-    if (!isValidPersonName(proposed)) {
-      await replyAndLog("Só para confirmar 😊 qual é o teu *nome*? (ex: João, Maria)", { step: "ask_name_retry" });
-      return NextResponse.json({ ok: true });
-    }
-
-    // grava no customer
-    const upd = await db
-      .from("customers")
-      .update({ name: proposed })
-      .eq("id", customer.id)
-      .select("id,name")
-      .maybeSingle();
-
-    if (upd.error) console.error("customers.update(name) error:", upd.error);
-
-    customer.name = proposed; // mantém em memória neste request
-
-    const nextCtx = (ctx?.next_ctx as any) ?? { mode: "NEW", offset: 0 };
-
-    // aviso fora do horário (respeita modo)
-    if ((nextCtx?.mode ?? "NEW") === "RESCHEDULE") {
-      await maybeWarnOutsideHours("reschedule");
-    } else {
-      await maybeWarnOutsideHours("new");
-    }
-
-    // await replyAndLog(`Obrigado, ${proposed} 😊` , { step: "ask_name_ok" });
-
-    // continua para categorias
-    return await sendCategoryMenu(
-      { ...nextCtx, offset: 0 },
-      0,
-      `Perfeito, ${proposed} 😊`
-    );
-  }
-
-  // ✅ NOVO: ASK_CATEGORY (listar categorias / paginação / escolher)
-  if (state === "ASK_CATEGORY") {
-    const categories: any[] = Array.isArray(ctx?.categories) ? ctx.categories : [];
-    const offset: number = Number(ctx?.offset) || 0;
-
-    const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
-    const n = Number(nRaw);
-
-    if (!categories.length) {
-      return await sendCategoryMenu(
-        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 },
-        0
-      );
-    }
-
-    const pageLen = Math.min(3, Math.max(0, categories.length - offset));
-    const hasMore = offset + pageLen < categories.length;
-    const minChoice = offset + 1;
-    const maxChoice = offset + pageLen;
-
-    // 9 = voltar ao início das categorias
-    if (n === 9) {
-      return await sendCategoryMenu(
-        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 },
-        0
-      );
-    }
-
-    // 0 = ver mais (próxima página)
-    if (n === 0) {
-      if (!hasMore) {
-        await replyAndLog("Não há mais categorias. Escolhe um número da lista acima 😊", { step: "no_more_categories" });
-        return NextResponse.json({ ok: true });
-      }
-      return await sendCategoryMenu(
-        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 },
-        offset + 3
-      );
-    }
-
-    // Escolha válida: número real mostrado (contínuo)
-    if (!Number.isFinite(n) || n < minChoice || n > maxChoice) {
-      const hint = hasMore
-        ? "Responde com um número da lista (0 = ver mais, 9 = voltar)."
-        : "Responde com um número da lista (9 = voltar).";
-      await replyAndLog(hint, { step: "category_retry" });
-      return NextResponse.json({ ok: true });
-    }
-
-    const chosen = categories[n - 1];
-    if (!chosen?.id) {
-      await replyAndLog("Essa categoria não está disponível. Escolhe um número da lista 😊", { step: "category_invalid" });
-      return NextResponse.json({ ok: true });
-    }
-
-    return await sendServiceMenuFromCategory(
-      { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null },
-      chosen.id,
-      0,
-      `✅ Categoria: *${chosen.name}*`
-    );
-  }
-
-// ✅ MODIFICADO: ASK_SERVICE agora usa ctx.services (já filtrado por categoria) e tem paginação + preço
-  if (state === "ASK_SERVICE") {
-    const services: any[] = Array.isArray(ctx?.services) ? ctx.services : [];
-    const offset: number = Number(ctx?.offset) || 0;
-    const categoryId: string | null = ctx?.category_id ?? null;
-
-    const cleaned = stripDiacritics(textRaw).replace(/[^0-9\-\,\s]/g, " ").trim();
-    const nums = cleaned
-      .split(/[^0-9]+/)
-      .map((x) => Number(x))
-      .filter((x) => Number.isFinite(x) && x > 0);
-    const uniqueNums = Array.from(new Set(nums)).slice(0, 6);
-    const n = uniqueNums[0] ?? NaN;
-
-    // 9 = voltar às categorias
-    if (n === 9) {
-      return await sendCategoryMenu(
-        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 },
-        0
-      );
-    }
-
-    // se perdeu contexto, volta pra categorias
-    if (!categoryId) {
-      return await sendCategoryMenu(
-        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null, offset: 0 },
-        0
-      );
-    }
-
-    // se não tem a lista, recarrega do banco
-    if (!services.length) {
-      return await sendServiceMenuFromCategory(
-        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null },
-        categoryId,
-        0
-      );
-    }
-
-    const pageLen = Math.min(3, Math.max(0, services.length - offset));
-    const hasMore = offset + pageLen < services.length;
-    const minChoice = offset + 1;
-    const maxChoice = offset + pageLen;
-
-    // 0 = ver mais serviços
-    if (n === 0) {
-      if (!hasMore) {
-        await replyAndLog("Não há mais serviços. Escolhe um número da lista acima 😊", { step: "no_more_services" });
-        return NextResponse.json({ ok: true });
-      }
-      return await sendServiceMenuFromCategory(
-        { mode: ctx?.mode ?? "NEW", reschedule_from_appointment_id: ctx?.reschedule_from_appointment_id ?? null },
-        categoryId,
-        offset + 3
-      );
-    }
-
-    if (!Number.isFinite(n) || n < minChoice || n > maxChoice) {
-      const hint = hasMore
-        ? "Responde com um número da lista (0 = ver mais, 9 = categorias)."
-        : "Responde com um número da lista (9 = categorias).";
-      await replyAndLog(hint, { step: "service_retry" });
-      return NextResponse.json({ ok: true });
-    }
-
-const picks = uniqueNums.map((k) => services[k - 1]).filter((x) => x?.id);
-if (!picks.length) {
-  await replyAndLog("Esse serviço não está disponível. Escolhe um número da lista 😊", { step: "service_invalid" });
-  return NextResponse.json({ ok: true });
-}
-
-const totalMinutes = picks.reduce((a: number, s: any) => a + Number(s.duration_minutes ?? 0), 0) || Number(picks[0].duration_minutes ?? 30);
-const totalCents = picks.reduce((a: number, s: any) => a + Number(s.price_cents ?? 0), 0);
-const names = picks.map((s: any) => String(s.name ?? "")).filter(Boolean);
-
-const nextCtx = {
-  ...ctx,
-  service_id: picks[0].id,
-  service_ids: picks.map((s: any) => s.id),
-  service_name: names.join(" + "),
-  service_names: names,
-  duration_minutes: totalMinutes,
-  price_cents_total: totalCents,
-  offset: 0,
-};
-
-    if (COMPANY_PLAN === "pro" && (ACTIVE_STAFF?.length ?? 0) > 1) {
-      return await sendStaffMenu(nextCtx);
-    }
-
-    await setSession("ASK_DAY", nextCtx);
-
-    const price = formatPriceEur(nextCtx.price_cents_total ?? 0);
-    const pricePart = price ? ` (${price})` : "";
-
-    await replyAndLog(`✅ Serviço: *${nextCtx.service_name}* (${nextCtx.duration_minutes}min)${pricePart}\nAgora diz-me o dia (HOJE, AMANHÃ ou 10/02).`, {
-      step: "day",
-    });
-
-    return NextResponse.json({ ok: true });
-  }
-
-
-  if (state === "ASK_STAFF") {
-    const opts: any[] = Array.isArray(ctx?.staff_options) ? ctx.staff_options : [];
-    const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
-    const n = Number(nRaw);
-
-    if (!Number.isFinite(n) || n < 1 || n > opts.length) {
-      await replyAndLog("Responda com o número do staff na lista 😊", { step: "staff_retry" });
-      return NextResponse.json({ ok: true });
-    }
-
-    const chosen = opts[n - 1];
-    const nextCtx = { ...ctx, staff_id: chosen?.id ?? null, staff_name: chosen?.name ?? null, offset: 0 };
-    await setSession("ASK_DAY", nextCtx);
-    await replyAndLog("Perfeito! Agora me diga o dia (ex: hoje / amanhã / 15/02).", { step: "staff_chosen" });
-    return NextResponse.json({ ok: true });
-  }
-
-if (state === "ASK_DAY") {
-    const isoDate = parseDayPt(textRaw);
-    if (!isoDate) {
-      await replyAndLog(`Ainda não apanhei o dia 😅\nResponde assim, por favor: HOJE, AMANHÃ ou 10/02.`, {
-        step: "day_retry",
-      });
-      return NextResponse.json({ ok: true });
-    }
-    return await processDaySelection(isoDate);
-  }
-
-  if (state === "SHOW_SLOTS") {
-    const maybeNewDay = parseDayPt(textRaw);
-    if (maybeNewDay) {
-      return await processDaySelection(maybeNewDay);
-    }
-
-    const nRaw = stripDiacritics(textRaw).replace(/[^\d]/g, "");
-    const n = Number(nRaw);
-
-    const slots: any[] = Array.isArray(ctx?.slots) ? ctx.slots : [];
-    const isoDate: string | null = ctx?.isoDate ?? null;
-    const offset: number = Number(ctx?.offset) || 0;
-
-    if (!isoDate || slots.length === 0) {
-      await clearSession();
-      await replyAndLog(`Vamos começar de novo 😊\nResponde: *QUERO MARCAR*`, { step: "reset" });
-      return NextResponse.json({ ok: true });
-    }
-
-    if (n === 4) {
-      const nextOffset = offset + 3;
-      const page = slots.slice(nextOffset, nextOffset + 3);
-
-      if (page.length === 0) {
-        await replyAndLog(
-          `Já não tenho mais horários nesse dia.\nEscolhe 1, 2 ou 3 da lista anterior,\nou envia outro dia (ex: 07/02).`,
-          { step: "no_more_slots" }
-        );
-        return NextResponse.json({ ok: true });
-      }
-
-      const lines = page.map((s, i) => `${i + 1}) ${s.label}`).join("\n");
-      await setSession("SHOW_SLOTS", { ...ctx, offset: nextOffset });
-
-      await replyAndLog(`📅 ${formatDatePt(isoDate)}\nMais horários:\n${lines}\n4) Ver mais`, {
-        step: `slots_page_${nextOffset}`,
-      });
-
-      return NextResponse.json({ ok: true });
-    }
-
-    if (![1, 2, 3].includes(n)) {
-      await replyAndLog(`Responde 1, 2, 3 ou 4 (para ver mais horários).`, { step: "slot_retry" });
-      return NextResponse.json({ ok: true });
-    }
-
-    const chosen = slots[offset + (n - 1)];
-    if (!chosen) {
-      await replyAndLog(`Esse horário já não está disponível 😕\nResponde 4 para ver mais horários.`, {
-        step: "slot_invalid",
-      });
-      return NextResponse.json({ ok: true });
-    }
-
-    if (COMPANY_SCHEDULE.lunchBreak.enabled && isSlotInLunchBreak(chosen, isoDate)) {
-      await replyAndLog(`⏸️ Esse horário cai na pausa de almoço.\nEscolhe outro (1, 2, 3) ou 4 para ver mais.`, {
-        step: "lunch_break_recheck_block",
-        isoDate,
-        chosen: chosen.label,
-      });
-      return NextResponse.json({ ok: true });
-    }
-
-    if (COMPANY_SCHEDULE.dailyLimit.enabled) {
-      const total = await countAppointmentsForDay(isoDate, ctx?.staff_id ?? null);
-      if (total >= COMPANY_SCHEDULE.dailyLimit.maxAppointments) {
-        await clearSession();
-        await replyAndLog(
-          `📅 A agenda de ${formatDatePt(isoDate)} acabou de ficar completa.\nQueres tentar outro dia? (ex: AMANHÃ ou 10/02)`,
-          { step: "daily_limit_recheck_block", isoDate, total }
-        );
-        return NextResponse.json({ ok: true });
-      }
-    }
-
-    const usedNow = await countOverlappingAppointments(chosen.startISO, chosen.endISO, ctx?.staff_id ?? null);
-    if (usedNow >= COMPANY_SCHEDULE.slotCapacity) {
-      await replyAndLog(`⚠️ Esse horário acabou de ficar cheio.\nEscolhe outro (1, 2, 3) ou 4 para ver mais.`, {
-        step: "slot_capacity_full",
-        isoDate,
-        chosen: chosen.label,
-        usedNow,
-        cap: COMPANY_SCHEDULE.slotCapacity,
-      });
-      return NextResponse.json({ ok: true });
-    }
-
     const rescheduleFromId = ctx?.reschedule_from_appointment_id ?? null;
     if (ctx?.mode === "RESCHEDULE" && rescheduleFromId) {
       await db.from("appointments").update({ status: "CANCELLED", status_v2: "CANCELLED" }).eq("id", rescheduleFromId);
+    }
+
+    // determine chosen slot from context (fallbacks for compatibility)
+    const chosen =
+      ctx?.chosen ??
+      (ctx?.pending_slot
+        ? { startISO: ctx.pending_slot.startISO, endISO: ctx.pending_slot.endISO, label: ctx.pending_slot.label }
+        : ctx?.start_time && ctx?.end_time
+        ? { startISO: ctx.start_time, endISO: ctx.end_time, label: (ctx.start_time || "").slice(11, 16) }
+        : null);
+
+    if (!chosen) {
+      console.error("processDaySelection: no chosen slot in context", { ctx });
+      await replyAndLog("Ups… não consegui reservar esse horário. Por favor tenta novamente ou escolhe outro horário.", {
+        step: "no_chosen_slot",
+      });
+      return NextResponse.json({ ok: true });
     }
 
     const insert = await db

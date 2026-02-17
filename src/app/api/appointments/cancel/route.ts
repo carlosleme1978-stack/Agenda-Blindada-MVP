@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     // cancela e pega dados úteis
     const { data: appt, error: aErr } = await admin
       .from("appointments")
-      .update({ status: "CANCELLED" })
+      .update({ status: "CANCELLED", status_v2: "CANCELLED" })
       .eq("id", appointmentId)
       .eq("company_id", companyId)
       .select("id,customer_id,start_time")

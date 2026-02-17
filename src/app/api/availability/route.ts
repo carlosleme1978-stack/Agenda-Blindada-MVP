@@ -48,9 +48,13 @@ function overlap(aStart: number, aEnd: number, bStart: number, bEnd: number) {
   return aStart < bEnd && aEnd > bStart;
 }
 
+// Modelo SOLO (1 dono):
+// - Ignora staff
+// - Usa owner_working_hours (por owner_id)
+// - Bloqueia slots por overlap em appointments do dono
 export async function GET(req: Request) {
   const ip = getClientIp(req as any);
-  const limited = rateLimitOr429(req as any, { key: `availability:` + ip, limit: 80, windowMs: 60_000 });
+  const limited = rateLimitOr429(req as any, { key: `availability:` + ip, limit: 120, windowMs: 60_000 });
   if (limited) return limited;
 
   try {
@@ -59,8 +63,6 @@ export async function GET(req: Request) {
 
     const url = new URL(req.url);
     const date = String(url.searchParams.get("date") || "").trim(); // YYYY-MM-DD
-    // Modelo Solo: staff_id opcional (ignorado)
-    const staffIdParam = String(url.searchParams.get("staff_id") || "").trim();
     const durationMinutes = Math.max(5, Number(url.searchParams.get("duration") || 30));
     const stepMinutes = Math.max(5, Number(url.searchParams.get("step") || 15));
 
@@ -74,75 +76,31 @@ export async function GET(req: Request) {
 
     const userId = userRes.user.id;
 
-    const { data: prof } = await admin
-      .from("profiles")
-      .select("company_id,role,staff_id")
-      .eq("id", userId)
-      .single();
+    // Timezone: tenta company -> fallback Lisbon
+    const { data: prof } = await admin.from("profiles").select("company_id").eq("id", userId).maybeSingle();
+    const companyId = (prof as any)?.company_id as string | undefined;
 
-    const companyId = prof?.company_id as string | undefined;
-    if (!companyId) return NextResponse.json({ error: "Sem company" }, { status: 400 });
-
-    const role = String(prof?.role ?? "owner");
-    let staffId: string | null = null;
-
-    if (role === "staff") {
-      staffId = (prof?.staff_id as string | null) ?? null;
-      if (!staffId) return NextResponse.json({ error: "Staff sem staff_id no profile" }, { status: 400 });
-    } else {
-      staffId = staffIdParam || null;
-      if (!staffId) {
-        const { data: s } = await admin
-          .from("staff")
-          .select("id")
-          .eq("company_id", companyId)
-          .eq("active", true)
-          .order("created_at", { ascending: true })
-          .limit(1)
-          .maybeSingle();
-        staffId = s?.id ?? null;
-      }
+    let timeZone = "Europe/Lisbon";
+    if (companyId) {
+      const { data: comp } = await admin.from("companies").select("timezone").eq("id", companyId).maybeSingle();
+      timeZone = (comp as any)?.timezone || timeZone;
     }
 
-    if (!staffId) return NextResponse.json({ error: "Nenhum staff ativo encontrado" }, { status: 400 });
-
-    const { data: comp } = await admin.from("companies").select("timezone,plan,staff_limit").eq("id", companyId).single();
-    const timeZone = (comp?.timezone as string) || "Europe/Lisbon";
-
-    const staffLimit = Number((comp as any)?.staff_limit ?? 1);
-    const plan = String((comp as any)?.plan ?? "basic").toLowerCase();
-
-    const { data: srows } = await admin
-      .from("staff")
-      .select("id")
-      .eq("company_id", companyId)
-      .eq("active", true)
-      .order("created_at", { ascending: true });
-
-    const allowedStaffIds = (srows ?? []).map((x: any) => String(x.id)).slice(0, Math.max(1, staffLimit));
-
-    if (!allowedStaffIds.includes(staffId)) {
-      return NextResponse.json(
-        { error: `Limite de staff do plano ${plan.toUpperCase()} atingido. Atualize para PRO para usar mais staff.` },
-        { status: 402 }
-      );
-    }
-    // Business hours por staff (configurável)
-// day range in UTC for query (00:00 - 24:00 local tz)
+    // day range in UTC (00:00 - 24:00 local tz)
     const dayStartUtc = zonedDateTimeToUtc(date, "00:00", timeZone);
     const dayEndUtc = zonedDateTimeToUtc(date, "23:59", timeZone);
 
     // day of week in timezone (0=Sun)
     const localMid = new Date(dayStartUtc.getTime() + 12 * 60 * 60 * 1000);
     const dow = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(localMid);
-    const map: any = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    const map: any = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
     const dayOfWeek = map[dow] ?? 1;
 
+    // Horários do dono
     const { data: wh } = await admin
-      .from("working_hours")
+      .from("owner_working_hours")
       .select("start_time,end_time,active")
-      .eq("company_id", companyId)
-      .eq("staff_id", staffId)
+      .eq("owner_id", userId)
       .eq("day_of_week", dayOfWeek)
       .maybeSingle();
 
@@ -150,32 +108,42 @@ export async function GET(req: Request) {
     const close = wh?.active === false ? null : (wh?.end_time as string) || "18:00";
 
     if (!open || !close) {
-      return NextResponse.json({ ok: true, date, staff_id: staffId, timeZone, slots: [] });
+      return NextResponse.json({ ok: true, date, timeZone, slots: [] });
     }
 
-
-    const { data: appts, error: aErr } = await admin
+    // Marcações do dono (filtra por company_id se existir, para isolar contas antigas)
+    let q: any = admin
       .from("appointments")
-      .select("start_time,end_time,status,service_duration_minutes_snapshot")
-      .eq("company_id", companyId)
-      .eq("staff_id", staffId)
-      .in("status", ["BOOKED", "CONFIRMED", "PENDING"])
-      .lt("start_time", dayEndUtc.toISOString())
-      .gt("end_time", dayStartUtc.toISOString());
+      .select("start_time,end_time,status,status_v2,service_duration_minutes_snapshot")
+      .gte("start_time", dayStartUtc.toISOString())
+      .lte("start_time", dayEndUtc.toISOString());
 
+    if (companyId) q = q.eq("company_id", companyId);
+
+    const { data: appts, error: aErr } = await q;
     if (aErr) return NextResponse.json({ error: aErr.message }, { status: 400 });
 
+    // Statuses ativos (sem PENDING enum)
     const busy = (appts ?? [])
-      .map((a: any) => ({
-        s: new Date(a.start_time).getTime(),
-        e: (a.end_time ? new Date(a.end_time).getTime() : (new Date(a.start_time).getTime() + (Number((a as any).service_duration_minutes_snapshot ?? durationMinutes) * 60_000))),
-      }))
-      .filter((x) => Number.isFinite(x.s) && Number.isFinite(x.e));
+      .filter((a: any) => {
+        const s = String(a.status || "");
+        const s2 = String(a.status_v2 || "");
+        // considera ocupado se confirmado/marcado/pendente (text)
+        if (["BOOKED", "CONFIRMED"].includes(s)) return true;
+        if (["PENDING", "CONFIRMED"].includes(s2)) return true;
+        return false;
+      })
+      .map((a: any) => {
+        const st = new Date(a.start_time).getTime();
+        const en = a.end_time
+          ? new Date(a.end_time).getTime()
+          : new Date(a.start_time).getTime() + Number(a.service_duration_minutes_snapshot ?? durationMinutes) * 60_000;
+        return { s: st, e: en };
+      })
+      .filter((x: any) => Number.isFinite(x.s) && Number.isFinite(x.e));
 
-    // Generate slots in local tz, return startISO in UTC
     const slots: { label: string; startISO: string }[] = [];
 
-    // iterate local minutes
     const [oh, om] = open.split(":").map(Number);
     const [ch, cm] = close.split(":").map(Number);
     const openMin = oh * 60 + om;
@@ -192,23 +160,11 @@ export async function GET(req: Request) {
       const sMs = sUtc.getTime();
       const eMs = eUtc.getTime();
 
-      const clash = busy.some((b) => overlap(sMs, eMs, b.s, b.e));
-      if (!clash) {
-        slots.push({ label: t, startISO: sUtc.toISOString() });
-      }
+      const clash = busy.some((b: any) => overlap(sMs, eMs, b.s, b.e));
+      if (!clash) slots.push({ label: t, startISO: sUtc.toISOString() });
     }
 
-    return NextResponse.json({
-      ok: true,
-      date,
-      staff_id: staffId,
-      timeZone,
-      open,
-      close,
-      durationMinutes,
-      stepMinutes,
-      slots,
-    });
+    return NextResponse.json({ ok: true, date, timeZone, open, close, durationMinutes, stepMinutes, slots });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Erro" }, { status: 500 });
   }

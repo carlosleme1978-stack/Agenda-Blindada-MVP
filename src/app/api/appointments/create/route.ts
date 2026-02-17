@@ -8,7 +8,7 @@ function toDigits(phone: string) {
 
 export async function POST(req: Request) {
   const ip = getClientIp(req as any);
-  const limited = rateLimitOr429(req as any, { key: `appt_create:` + ip, limit: 40, windowMs: 60_000 });
+  const limited = rateLimitOr429(req as any, { key: `appt_create:` + ip, limit: 60, windowMs: 60_000 });
   if (limited) return limited;
 
   try {
@@ -27,109 +27,26 @@ export async function POST(req: Request) {
       startISO?: string;
       durationMinutes?: number;
       serviceId?: string;
-      staffId?: string;
+      serviceIds?: string[];
     };
 
     const customerPhone = toDigits(String(body.customerPhone ?? ""));
     const customerName = String(body.customerName ?? "").trim();
     const startISO = String(body.startISO ?? "").trim();
-    const durationMinutes = Number(body.durationMinutes ?? 30);
+    const durationMinutes = Math.max(5, Number(body.durationMinutes ?? 30));
 
-    // ✅ agora é obrigatório ter NOME e TELEFONE
     if (!customerName) return new NextResponse("Nome é obrigatório", { status: 400 });
     if (!customerPhone || customerPhone.length < 9) return new NextResponse("Telefone inválido", { status: 400 });
     if (!startISO || !durationMinutes) return new NextResponse("Dados inválidos", { status: 400 });
 
-    // company + role + staff_id
-    const { data: prof } = await admin
-      .from("profiles")
-      .select("company_id,role,staff_id")
-      .eq("id", userId)
-      .single();
-
-    const companyId = prof?.company_id as string | undefined;
+    const { data: prof } = await admin.from("profiles").select("company_id").eq("id", userId).maybeSingle();
+    const companyId = (prof as any)?.company_id as string | undefined;
     if (!companyId) return new NextResponse("Sem company_id", { status: 400 });
 
-    const role = String(prof?.role ?? "owner");
-
-    // Plano/limite
-    const { data: comp } = await admin.from("companies").select("plan,staff_limit").eq("id", companyId).single();
-    const plan = String((comp as any)?.plan ?? "basic").toLowerCase();
-    const staffLimit = Number((comp as any)?.staff_limit ?? 1);
-
-    // Lista de staff permitido (primeiros N ativos por created_at)
-    const { data: staffRows } = await admin
-      .from("staff")
-      .select("id")
-      .eq("company_id", companyId)
-      .eq("active", true)
-      .order("created_at", { ascending: true });
-
-    const allowedStaffIds = (staffRows ?? []).map((x: any) => String(x.id)).slice(0, Math.max(1, staffLimit));
-
-    // Determine staff_id
-    let staffId: string | null = null;
-
-    if (role === "staff") {
-      staffId = prof?.staff_id ?? null;
-      if (!staffId) return new NextResponse("Staff sem staff_id no profile", { status: 400 });
-      // staff só pode marcar para si
-      if (!allowedStaffIds.includes(staffId)) {
-        return new NextResponse("Este staff está fora do limite do plano atual.", { status: 402 });
-      }
-    } else {
-      staffId = String(body.staffId ?? "").trim() || null;
-      if (!staffId) staffId = allowedStaffIds[0] ?? null;
-
-      if (!staffId) return new NextResponse("Nenhum staff ativo encontrado", { status: 400 });
-
-      // ✅ BASIC / limite: não deixa marcar para staff fora do permitido
-      if (!allowedStaffIds.includes(staffId)) {
-        return new NextResponse("Limite de staff do plano atingido. Atualize para PRO para usar mais staff.", {
-          status: 402,
-        });
-      }
-    }
-
-    // Upsert customer
-    const { data: custUp, error: custErr } = await admin
-      .from("customers")
-      .upsert({ company_id: companyId, phone: customerPhone, name: customerName }, { onConflict: "company_id,phone" })
-      .select("id,phone,name")
-      .single();
-
-    if (custErr || !custUp) return new NextResponse(custErr?.message ?? "Erro cliente", { status: 400 });
-
-    const start = new Date(startISO);
-    if (isNaN(start.getTime())) return new NextResponse("startISO inválido", { status: 400 });
-    const end = new Date(start.getTime() + durationMinutes * 60000);
-
-    
-    // ✅ Bloqueio de horário duplicado (server-side)
-    const { data: clashRows, error: clashErr } = await admin
-      .from("appointments")
-      .select("id,start_time,end_time,status")
-      .eq("company_id", companyId)
-      .eq("staff_id", staffId)
-      .in("status", ["BOOKED", "CONFIRMED", "PENDING"])
-      .lt("start_time", end.toISOString())
-      .gt("end_time", start.toISOString())
-      .limit(1);
-
-    if (clashErr) return new NextResponse(clashErr.message, { status: 400 });
-    if ((clashRows ?? []).length) {
-      return new NextResponse("Este horário já está ocupado para este staff. Escolha outro horário.", { status: 409 });
-    }
-
-// Pick service(s)
-    const rawServiceIds = (body as any).serviceIds ?? (body as any).service_ids ?? null;
-    const serviceIds = Array.isArray(rawServiceIds)
-      ? rawServiceIds.map((s: any) => String(s).trim()).filter((s: string) => s.length)
-      : String(rawServiceIds ?? "").split(",").map((s: string) => s.trim()).filter((s: string) => s.length);
-
-    const primaryServiceId = String((body as any).service_id ?? (body as any).serviceId ?? "").trim();
-    const finalServiceIds = (serviceIds && serviceIds.length) ? serviceIds : (primaryServiceId ? [primaryServiceId] : []);
-
+    // Services (multi)
+    const rawIds = Array.isArray((body as any).serviceIds) ? (body as any).serviceIds : null;
+    const primary = String((body as any).serviceId ?? "").trim();
+    const finalServiceIds = (rawIds && rawIds.length ? rawIds : (primary ? [primary] : [])).map((s: any) => String(s).trim()).filter((s: string) => s.length);
     if (!finalServiceIds.length) return new NextResponse("Service obrigatório.", { status: 400 });
 
     const { data: pickedServices, error: psErr } = await admin
@@ -141,23 +58,39 @@ export async function POST(req: Request) {
     if (psErr) return new NextResponse(psErr.message, { status: 400 });
     if (!pickedServices || pickedServices.length === 0) return new NextResponse("Service inválido.", { status: 400 });
 
-    const totalMinutes = pickedServices.reduce((a: number, s: any) => a + Number(s.duration_minutes ?? 0), 0) || 30;
+    const totalMinutes = pickedServices.reduce((a: number, s: any) => a + Number(s.duration_minutes ?? 0), 0) || durationMinutes;
     const totalCents = pickedServices.reduce((a: number, s: any) => a + Number(s.price_cents ?? 0), 0);
     const currency = String((pickedServices[0] as any).currency ?? "EUR");
 
+    const start = new Date(startISO);
+    if (isNaN(start.getTime())) return new NextResponse("startISO inválido", { status: 400 });
+    const end = new Date(start.getTime() + totalMinutes * 60000);
 
-    let serviceId: string | null = String(body.serviceId ?? "").trim() || null;
-    if (!serviceId) {
-      const { data: sv } = await admin
-        .from("services")
-        .select("id")
-        .eq("company_id", companyId)
-        .eq("active", true)
-        .order("created_at", { ascending: true })
-        .limit(1)
-        .maybeSingle();
-      serviceId = sv?.id ?? null;
+    // Upsert customer (single owner, still scoped by company)
+    const { data: custUp, error: custErr } = await admin
+      .from("customers")
+      .upsert({ company_id: companyId, phone: customerPhone, name: customerName }, { onConflict: "company_id,phone" })
+      .select("id,phone,name")
+      .single();
+
+    if (custErr || !custUp) return new NextResponse(custErr?.message ?? "Erro cliente", { status: 400 });
+
+    // Bloqueio de overlap (SOLO: sem staff_id)
+    const { data: clashRows, error: clashErr } = await admin
+      .from("appointments")
+      .select("id")
+      .eq("company_id", companyId)
+      .in("status", ["BOOKED", "CONFIRMED"])
+      .lt("start_time", end.toISOString())
+      .gt("end_time", start.toISOString())
+      .limit(1);
+
+    if (clashErr) return new NextResponse(clashErr.message, { status: 400 });
+    if ((clashRows ?? []).length) {
+      return new NextResponse("Este horário já está ocupado. Escolha outro horário.", { status: 409 });
     }
+
+    const first = pickedServices[0] as any;
 
     const { data: appt, error: apptErr } = await admin
       .from("appointments")
@@ -166,10 +99,15 @@ export async function POST(req: Request) {
         customer_id: custUp.id,
         start_time: start.toISOString(),
         end_time: end.toISOString(),
-        status: "BOOKED",
-        staff_id: staffId,
-        service_id: String(pickedServices[0].id),
+        status: "CONFIRMED",
+        status_v2: "CONFIRMED",
+        staff_id: null,
+        service_id: String(first.id),
         customer_name_snapshot: customerName,
+        service_name_snapshot: String(first.name ?? ""),
+        service_duration_minutes_snapshot: totalMinutes,
+        service_price_cents_snapshot: totalCents,
+        service_currency_snapshot: currency,
       })
       .select("id")
       .single();
@@ -178,13 +116,13 @@ export async function POST(req: Request) {
       return new NextResponse(apptErr?.message ?? "Erro ao criar marcação", { status: 400 });
     }
 
-    // Fire-and-forget WhatsApp message (best effort)
+    // Mensagem WhatsApp (best effort)
     try {
       const { sendWhatsAppTextForCompany } = await import("@/lib/whatsapp/company");
       await sendWhatsAppTextForCompany(
         companyId,
         customerPhone,
-        `Olá ${customerName}! Sua marcação foi criada. Para confirmar responda: SIM. Para cancelar: NÃO.`
+        `Olá ${customerName}! Sua marcação foi confirmada ✅\n\nData/hora: ${start.toLocaleString("pt-PT")}\nDuração: ${totalMinutes} min\nValor: ${(totalCents / 100).toFixed(2).replace(".", ",")} ${currency}`
       );
     } catch {
       // ignore
