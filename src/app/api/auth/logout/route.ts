@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
-function clearAllCookies(res: NextResponse) {
-  const cookieStore = cookies();
+async function clearAllCookies(res: NextResponse) {
+  const cookieStore = await cookies();
   const all = cookieStore.getAll();
 
   // "Desloga" zerando cada cookie (expira no passado)
@@ -21,7 +21,7 @@ export async function GET(req: Request) {
   // Redireciona imediatamente para /login e remove cookies.
   const res = NextResponse.redirect(new URL("/login", req.url));
   try {
-    clearAllCookies(res);
+    await clearAllCookies(res);
   } catch {}
   return res;
 }
@@ -30,7 +30,7 @@ export async function POST() {
   try {
     const res = NextResponse.json({ ok: true });
 
-    clearAllCookies(res);
+    await clearAllCookies(res);
     return res;
   } catch (e: any) {
     return NextResponse.json(
