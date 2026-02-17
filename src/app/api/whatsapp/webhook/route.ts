@@ -756,7 +756,7 @@ export async function POST(req: NextRequest) {
     const list = (ACTIVE_STAFF ?? []).slice(0, 9);
     if (!list.length) {
       // fallback: segue sem staff
-      await setSession("ASK_DAY", nextCtx);
+      await setSession("ASK_DAY", nextCtx2);
       await replyAndLog("Qual dia você prefere? (ex: hoje / amanhã / 15/02)", { step: "ask_day_fallback_no_staff" });
       return NextResponse.json({ ok: true });
     }
@@ -931,6 +931,37 @@ export async function POST(req: NextRequest) {
     const workDays: number[] = (cfg.work_days as any) ?? [1, 2, 3, 4, 5];
 
     const dayNum = isoDayNumberLisbon(isoDate);
+
+    // Staff-specific working hours (premium): if staff has working hours for this day, override company window
+    const staffIdLocal = String(ctx?.staff_id ?? "").trim();
+    if (staffIdLocal) {
+      const { data: sh } = await db
+        .from("staff_working_hours")
+        .select("start_time,end_time,active")
+        .eq("company_id", companyId)
+        .eq("staff_id", staffIdLocal)
+        .eq("day_of_week", dayNum)
+        .maybeSingle();
+
+      if (sh) {
+        if (sh.active === false) {
+          await replyAndLog(`Nesse dia o atendente não atende 😊
+Queres escolher outro dia? (ex: AMANHÃ ou 10/02)`, {
+            step: "day_not_allowed_staff",
+            isoDate,
+            dayNum,
+            staff_id: staffIdLocal,
+          });
+          return NextResponse.json({ ok: true });
+        }
+        if (sh.start_time) {
+          (cfg as any).work_start = sh.start_time;
+        }
+        if (sh.end_time) {
+          (cfg as any).work_end = sh.end_time;
+        }
+      }
+    }
     if (!workDays.includes(dayNum)) {
       await replyAndLog(`Nesse dia não atendemos 😊\nQueres escolher outro? (ex: AMANHÃ ou 10/02)`, {
         step: "day_not_allowed",
@@ -966,13 +997,18 @@ export async function POST(req: NextRequest) {
     const dayStart = `${isoDate}T00:00:00.000Z`;
     const dayEnd = `${isoDate}T23:59:59.999Z`;
 
-    const { data: dayAppts } = await db
+    let dayQ = db
       .from("appointments")
       .select("start_time,end_time,status,status_v2")
       .eq("company_id", companyId)
       .gte("start_time", dayStart)
       .lte("start_time", dayEnd)
       .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,CONFIRMED)");
+
+    const staffFilterId = String(ctx?.staff_id ?? "").trim();
+    if (staffFilterId) dayQ = (dayQ as any).eq("staff_id", staffFilterId);
+
+    const { data: dayAppts } = await (dayQ as any);
 
     let free = allSlots.filter((s) => {
       const used = (dayAppts || []).filter((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time)).length;
@@ -1305,7 +1341,7 @@ const nextCtx2 = {
       return await sendStaffMenu(nextCtx2);
     }
 
-    await setSession("ASK_DAY", nextCtx2);
+    await setSession("ASK_DAY", nextCtx);
 
     const price = formatPriceEur(nextCtx2.price_cents_total ?? 0);
     const pricePart = price ? ` (${price})` : "";

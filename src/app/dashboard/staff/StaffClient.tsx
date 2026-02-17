@@ -47,6 +47,21 @@ function pct(booked?: number | null, avail?: number | null) {
   return `${Math.round((b / a) * 100)}%`;
 }
 
+
+function defaultHours() {
+  // 0=Dom ... 6=Sáb
+  const base = [
+    { day_of_week: 0, start_time: "09:00", end_time: "18:00", active: false },
+    { day_of_week: 1, start_time: "09:00", end_time: "18:00", active: true },
+    { day_of_week: 2, start_time: "09:00", end_time: "18:00", active: true },
+    { day_of_week: 3, start_time: "09:00", end_time: "18:00", active: true },
+    { day_of_week: 4, start_time: "09:00", end_time: "18:00", active: true },
+    { day_of_week: 5, start_time: "09:00", end_time: "18:00", active: true },
+    { day_of_week: 6, start_time: "09:00", end_time: "18:00", active: false },
+  ];
+  return base;
+}
+
 export default function StaffClient(props: {
   initialCompany: Company;
   initialStaff: StaffRow[];
@@ -149,7 +164,8 @@ export default function StaffClient(props: {
     try {
       const json = await authedJson("/api/staff/hours", { staff_id: s.id, action: "get" });
       setHoursStaff(s);
-      setHours(json.hours ?? []);
+      const hh = (json.hours ?? []) as any[];
+      setHours(hh.length ? hh : defaultHours());
       setHoursOpen(true);
     } catch (e: any) {
       setMsg(e?.message ?? "Erro ao carregar horários.");

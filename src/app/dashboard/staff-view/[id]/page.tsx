@@ -94,9 +94,10 @@ export default function StaffViewPage({ params }: { params: { id: string } }) {
           .from("staff")
           .select("id,name,company_id,active")
           .eq("id", staffId)
+          .eq("company_id", companyId)
           .maybeSingle();
 
-        if (!st || String((st as any).company_id) !== String(companyId)) {
+        if (!st) { 
           setError("Staff inválido ou não pertence à sua empresa.");
           setLoading(false);
           return;
