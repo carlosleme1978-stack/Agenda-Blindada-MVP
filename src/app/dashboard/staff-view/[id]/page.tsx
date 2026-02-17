@@ -16,7 +16,6 @@ type AppointmentRow = {
   start_time: string;
   end_time: string | null;
   status: string;
-  status_v2?: string | null;
   customer_name_snapshot: string | null;
   customers?: { name: string | null; phone: string | null } | null;
 };
@@ -46,9 +45,7 @@ function fmtTime(iso: string) {
 
 export default function StaffViewPage({ params }: { params: { id: string } }) {
   const supabase = useMemo(() => supabaseBrowser, []);
-  // params.id pode vir URL-encoded. Além disso, em alguns cenários o link pode acabar usando
-  // o "slug" (nome do staff) em vez do UUID. Fazemos decode + fallback por nome.
-  const staffId = decodeURIComponent((params as any)?.id ?? "");
+  const staffId = params.id;
 
   const [loading, setLoading] = useState(true);
   const [plan, setPlan] = useState<"basic" | "pro">("basic");
@@ -72,59 +69,22 @@ export default function StaffViewPage({ params }: { params: { id: string } }) {
           return;
         }
 
-        // profile -> company
-        const { data: prof } = await supabase
-          .from("profiles")
-          .select("company_id, role")
-          .eq("id", uid)
-          .maybeSingle();
+        // MODEL A: single-tenant (owner = logged user)
 
-        const companyId = (prof as any)?.company_id as string | null;
-        if (!companyId) {
-          setError("Conta sem empresa associada.");
-          setLoading(false);
-          return;
-        }
-
-        // company plan
-        const { data: comp } = await supabase.from("companies").select("plan").eq("id", companyId).maybeSingle();
-        const planLocal = String((comp as any)?.plan ?? "basic").toLowerCase() === "pro" ? "pro" : "basic";
-        setPlan(planLocal as any);
-
-        // staff belongs to company
-        // 1) tenta por id
-        let { data: st } = await supabase
+        const { data: st } = await supabase
           .from("staff")
           .select("id,name,company_id,active")
-          .eq("company_id", companyId)
           .eq("id", staffId)
+          .eq("owner_id", uid)
           .maybeSingle();
 
-        // 2) fallback: se não parecer UUID, tenta por nome
-        const looksUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(staffId);
-        if (!st && staffId && !looksUuid) {
-          const r2 = await supabase
-            .from("staff")
-            .select("id,name,company_id,active")
-            .eq("company_id", companyId)
-            .ilike("name", staffId)
-            .maybeSingle();
-          st = (r2 as any).data;
-        }
-
-        if (!st) { 
-          setError("Staff inválido ou não pertence à sua empresa.");
+        if (!st) {
+          setError("Staff inválido ou não pertence à sua conta.");
           setLoading(false);
           return;
         }
         setStaff(st as any);
 
-        // If not PRO, block the view
-        if (planLocal !== "pro") {
-          setRows([]);
-          setLoading(false);
-          return;
-        }
 
         // Date window
         const now = new Date();
@@ -150,17 +110,18 @@ export default function StaffViewPage({ params }: { params: { id: string } }) {
             start_time,
             end_time,
             status,
-            status_v2,
             customer_name_snapshot,
             customers ( name, phone )
           `
           )
-          .eq("company_id", companyId)
+          .eq("owner_id", uid)
           .eq("staff_id", staffId)
           .gte("start_time", from)
           .lte("start_time", to)
           .order("start_time", { ascending: true })
           .limit(500);
+
+        if (tab !== "ALL") q = (q as any).eq("status", tab);
 
         const { data: appts, error: qErr } = await (q as any);
         if (qErr) {
@@ -168,16 +129,7 @@ export default function StaffViewPage({ params }: { params: { id: string } }) {
           setLoading(false);
           return;
         }
-        
-        const raw = (appts ?? []) as any[];
-        const effStatus = (r: any) => {
-          const v2 = String(r.status_v2 ?? "");
-          if (v2) return v2;
-          const st = String(r.status ?? "");
-          return st === "BOOKED" ? "PENDING" : st;
-        };
-        const filtered = tab === "ALL" ? raw : raw.filter((r) => effStatus(r) === tab);
-        setRows(filtered as any);
+        setRows((appts ?? []) as any);
       } catch {
         setError("Erro inesperado ao carregar agenda do staff.");
       } finally {
@@ -199,15 +151,9 @@ export default function StaffViewPage({ params }: { params: { id: string } }) {
 
   const metrics = useMemo(() => {
     const total = rows.length;
-    const eff = (r: any) => {
-      const v2 = String(r.status_v2 ?? "");
-      if (v2) return v2;
-      const st = String(r.status ?? "");
-      return st === "BOOKED" ? "PENDING" : st;
-    };
-    const confirmed = rows.filter((r) => eff(r) === "CONFIRMED").length;
-    const pending = rows.filter((r) => eff(r) === "PENDING").length;
-    const cancelled = rows.filter((r) => eff(r) === "CANCELLED").length;
+    const confirmed = rows.filter((r) => r.status === "CONFIRMED").length;
+    const pending = rows.filter((r) => r.status === "BOOKED" || r.status === "PENDING").length;
+    const cancelled = rows.filter((r) => r.status === "CANCELLED").length;
     return { total, confirmed, pending, cancelled };
   }, [rows]);
 
@@ -292,13 +238,12 @@ export default function StaffViewPage({ params }: { params: { id: string } }) {
                 {list.map((r) => {
                   const cname = r.customer_name_snapshot || r.customers?.name || "Cliente";
                   const phone = r.customers?.phone || "";
-                  const sEff = String((r as any).status_v2 ?? "") || (String(r.status ?? "") === "BOOKED" ? "PENDING" : String(r.status ?? ""));
                   const badge =
-                    sEff === "CONFIRMED"
+                    r.status === "CONFIRMED"
                       ? "ok"
-                      : sEff === "CANCELLED"
+                      : r.status === "CANCELLED"
                       ? "bad"
-                      : sEff === "PENDING"
+                      : r.status === "BOOKED" || r.status === "PENDING"
                       ? "warn"
                       : "muted";
                   return (

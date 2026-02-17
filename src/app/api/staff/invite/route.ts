@@ -51,7 +51,7 @@ export async function POST(req: Request) {
     const { count: activeCount, error: cntErr } = await admin
       .from("staff")
       .select("id", { count: "exact", head: true })
-      .eq("company_id", companyId)
+      .eq("owner_id", uid)
       .eq("active", true);
 
     if (cntErr) return NextResponse.json({ error: cntErr.message }, { status: 400 });

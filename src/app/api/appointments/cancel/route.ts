@@ -33,7 +33,7 @@ export async function POST(req: Request) {
       .from("appointments")
       .update({ status: "CANCELLED" })
       .eq("id", appointmentId)
-      .eq("company_id", companyId)
+      .eq("owner_id", uid)
       .select("id,customer_id,start_time")
       .single();
 

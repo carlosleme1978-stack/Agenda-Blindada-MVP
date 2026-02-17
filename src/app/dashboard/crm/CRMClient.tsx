@@ -41,18 +41,13 @@ export default function CRMClient() {
         return;
       }
 
-      const { data: prof } = await sb.from("profiles").select("company_id").eq("id", uid).maybeSingle();
-      const cid = (prof as any)?.company_id ? String((prof as any).company_id) : null;
+      const cid = uid;
       setCompanyId(cid);
-      if (!cid) {
-        setLoading(false);
-        return;
-      }
 
       const { data: custRows } = await sb
         .from("customers")
         .select("id,name,phone,created_at")
-        .eq("company_id", cid)
+        .eq("owner_id", uid)
         .order("created_at", { ascending: false })
         .limit(800);
 
@@ -64,7 +59,7 @@ export default function CRMClient() {
       const { data: appts } = await sb
         .from("appointments")
         .select("customer_id,start_time,status,service_price_cents_snapshot,service_name_snapshot")
-        .eq("company_id", cid)
+        .eq("owner_id", uid)
         .gte("start_time", start180.toISOString())
         .limit(5000);
 

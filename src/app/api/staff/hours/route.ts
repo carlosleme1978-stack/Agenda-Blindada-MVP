@@ -29,7 +29,7 @@ export async function GET(req: Request) {
   const { data, error } = await admin
     .from("staff_working_hours")
     .select("day_of_week,start_time,end_time,active")
-    .eq("company_id", companyId)
+    .eq("owner_id", uid)
     .eq("staff_id", staffId)
     .order("day_of_week", { ascending: true });
 

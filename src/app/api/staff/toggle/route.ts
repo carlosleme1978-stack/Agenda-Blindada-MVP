@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     if (role !== "owner") return NextResponse.json({ error: "Apenas o owner pode alterar staff." }, { status: 403 });
 
     // staff tem que ser da empresa
-    const { data: st } = await admin.from("staff").select("id,active").eq("id", staffId).eq("company_id", companyId).single();
+    const { data: st } = await admin.from("staff").select("id,active").eq("id", staffId).eq("owner_id", uid).single();
     if (!st) return NextResponse.json({ error: "Staff não encontrado" }, { status: 404 });
 
     // Se vai ATIVAR, precisa respeitar limite
@@ -40,7 +40,7 @@ export async function POST(req: Request) {
       const staffLimit = Number((comp as any)?.staff_limit ?? 1);
       const plan = String((comp as any)?.plan ?? "basic");
 
-      const { count } = await admin.from("staff").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("active", true);
+      const { count } = await admin.from("staff").select("id", { count: "exact", head: true }).eq("owner_id", uid).eq("active", true);
 
       if ((count ?? 0) >= staffLimit) {
         return NextResponse.json(
@@ -50,7 +50,7 @@ export async function POST(req: Request) {
       }
     }
 
-    const { data: upd, error: uErr } = await admin.from("staff").update({ active: nextActive }).eq("id", staffId).eq("company_id", companyId).select("id,active").single();
+    const { data: upd, error: uErr } = await admin.from("staff").update({ active: nextActive }).eq("id", staffId).eq("owner_id", uid).select("id,active").single();
     if (uErr) return NextResponse.json({ error: uErr.message }, { status: 400 });
 
     return NextResponse.json({ ok: true, staff: upd });

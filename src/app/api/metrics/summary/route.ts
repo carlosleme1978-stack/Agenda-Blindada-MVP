@@ -23,7 +23,7 @@ export async function GET(req: Request) {
   const role = String((prof as any)?.role ?? "owner");
   const staffId = (prof as any)?.staff_id as string | null;
 
-  let base = admin.from("appointments").select("id", { count: "exact", head: true }).eq("company_id", companyId);
+  let base = admin.from("appointments").select("id", { count: "exact", head: true }).eq("owner_id", uid);
   if (role === "staff" && staffId) base = base.eq("staff_id", staffId);
 
   const now = new Date();

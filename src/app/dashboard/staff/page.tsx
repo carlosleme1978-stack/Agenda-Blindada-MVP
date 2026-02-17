@@ -94,7 +94,7 @@ export default async function Page() {
   const { data: staff, error: sErr } = await sb
     .from("staff")
     .select("id,name,phone,role,active,created_at")
-    .eq("company_id", companyId)
+    .eq("owner_id", uid)
     .order("created_at", { ascending: true });
 
   if (sErr) {
@@ -104,12 +104,12 @@ export default async function Page() {
   const { data: fin } = await sb
     .from("v_staff_financial_metrics")
     .select("staff_id,revenue_realized_cents,revenue_expected_cents,revenue_lost_cents,total_completed,total_no_show,avg_ticket_cents")
-    .eq("company_id", companyId);
+    .eq("owner_id", uid);
 
   const { data: occ } = await sb
     .from("v_staff_occupancy")
     .select("staff_id,booked_minutes,available_minutes")
-    .eq("company_id", companyId);
+    .eq("owner_id", uid);
 
   return (
     <StaffClient

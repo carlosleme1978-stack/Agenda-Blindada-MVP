@@ -473,6 +473,11 @@ export async function POST(req: NextRequest) {
 
   const companyId = resolvedCompanyId;
 
+  // derive uid (owner id) used in queries; prefer companies.owner_id but fall back to companyId
+  // this fixes "Cannot find name 'uid'" by ensuring uid is defined.
+  const { data: _companyOwnerRow } = await db.from("companies").select("owner_id").eq("id", companyId).maybeSingle();
+  const uid: string = (_companyOwnerRow as any)?.owner_id ?? companyId;
+
   // ─────────────────────────────────────────────
   // ✅ Nome do cliente (primeira vez)
   // ─────────────────────────────────────────────
@@ -487,7 +492,7 @@ export async function POST(req: NextRequest) {
   const { data: session0 } = await db
     .from("chat_sessions")
     .select("state, context")
-    .eq("company_id", companyId)
+    .eq("owner_id", uid)
     .eq("customer_id", customer.id)
     .maybeSingle();
 
@@ -529,7 +534,7 @@ export async function POST(req: NextRequest) {
         context: nextCtx ?? {},
         updated_at: new Date().toISOString(),
       })
-      .eq("company_id", companyId)
+      .eq("owner_id", uid)
       .eq("customer_id", customer.id)
       .select("company_id");
 
@@ -651,7 +656,7 @@ export async function POST(req: NextRequest) {
   const { data: staffRows } = await db
     .from("staff")
     .select("id,name,active,created_at")
-    .eq("company_id", companyId)
+    .eq("owner_id", uid)
     .eq("active", true)
     .order("created_at", { ascending: true });
 
@@ -674,10 +679,10 @@ export async function POST(req: NextRequest) {
     let q = db
       .from("appointments")
       .select("*", { count: "exact", head: true })
-      .eq("company_id", companyId)
+      .eq("owner_id", uid)
       .gte("start_time", dayStart)
       .lte("start_time", dayEnd)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,CONFIRMED)");
+      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)");
 
     if (staffId) q = (q as any).eq("staff_id", staffId);
 
@@ -692,8 +697,8 @@ export async function POST(req: NextRequest) {
     let q = db
       .from("appointments")
       .select("*", { count: "exact", head: true })
-      .eq("company_id", companyId)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,CONFIRMED)")
+      .eq("owner_id", uid)
+      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
       .lt("start_time", endISO)
       .gt("end_time", startISO);
 
@@ -712,7 +717,7 @@ export async function POST(req: NextRequest) {
     const { data: cats, error } = await db
       .from("service_categories")
       .select("id,name,sort_order,active,created_at")
-      .eq("company_id", companyId)
+      .eq("owner_id", uid)
       .eq("active", true)
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: true });
@@ -775,7 +780,7 @@ export async function POST(req: NextRequest) {
     const { data: services, error } = await db
       .from("services")
       .select("id,name,duration_minutes,price_cents,sort_order,active,category_id,created_at")
-      .eq("company_id", companyId)
+      .eq("owner_id", uid)
       .eq("active", true)
       .eq("category_id", categoryId)
       .order("sort_order", { ascending: true })
@@ -839,9 +844,9 @@ export async function POST(req: NextRequest) {
     const { data: appt } = await db
       .from("appointments")
       .select("id,start_time,status")
-      .eq("company_id", companyId)
+      .eq("owner_id", uid)
       .eq("customer_id", customer.id)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,CONFIRMED)")
+      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
       .gte("start_time", new Date().toISOString())
       .order("start_time", { ascending: true })
       .limit(1)
@@ -931,37 +936,6 @@ export async function POST(req: NextRequest) {
     const workDays: number[] = (cfg.work_days as any) ?? [1, 2, 3, 4, 5];
 
     const dayNum = isoDayNumberLisbon(isoDate);
-
-    // Staff-specific working hours (premium): if staff has working hours for this day, override company window
-    const staffIdLocal = String(ctx?.staff_id ?? "").trim();
-    if (staffIdLocal) {
-      const { data: sh } = await db
-        .from("staff_working_hours")
-        .select("start_time,end_time,active")
-        .eq("company_id", companyId)
-        .eq("staff_id", staffIdLocal)
-        .eq("day_of_week", dayNum)
-        .maybeSingle();
-
-      if (sh) {
-        if (sh.active === false) {
-          await replyAndLog(`Nesse dia o atendente não atende 😊
-Queres escolher outro dia? (ex: AMANHÃ ou 10/02)`, {
-            step: "day_not_allowed_staff",
-            isoDate,
-            dayNum,
-            staff_id: staffIdLocal,
-          });
-          return NextResponse.json({ ok: true });
-        }
-        if (sh.start_time) {
-          (cfg as any).work_start = sh.start_time;
-        }
-        if (sh.end_time) {
-          (cfg as any).work_end = sh.end_time;
-        }
-      }
-    }
     if (!workDays.includes(dayNum)) {
       await replyAndLog(`Nesse dia não atendemos 😊\nQueres escolher outro? (ex: AMANHÃ ou 10/02)`, {
         step: "day_not_allowed",
@@ -997,18 +971,13 @@ Queres escolher outro dia? (ex: AMANHÃ ou 10/02)`, {
     const dayStart = `${isoDate}T00:00:00.000Z`;
     const dayEnd = `${isoDate}T23:59:59.999Z`;
 
-    let dayQ = db
+    const { data: dayAppts } = await db
       .from("appointments")
       .select("start_time,end_time,status,status_v2")
-      .eq("company_id", companyId)
+      .eq("owner_id", uid)
       .gte("start_time", dayStart)
       .lte("start_time", dayEnd)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,CONFIRMED)");
-
-    const staffFilterId = String(ctx?.staff_id ?? "").trim();
-    if (staffFilterId) dayQ = (dayQ as any).eq("staff_id", staffFilterId);
-
-    const { data: dayAppts } = await (dayQ as any);
+      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)");
 
     let free = allSlots.filter((s) => {
       const used = (dayAppts || []).filter((a: any) => overlaps(s.startISO, s.endISO, a.start_time, a.end_time)).length;
@@ -1058,9 +1027,9 @@ Queres escolher outro dia? (ex: AMANHÃ ou 10/02)`, {
     const { data: nextAppt } = await db
       .from("appointments")
       .select("id,status,start_time")
-      .eq("company_id", companyId)
+      .eq("owner_id", uid)
       .eq("customer_id", customer.id)
-      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,CONFIRMED)")
+      .or("status_v2.in.(PENDING,CONFIRMED),status.in.(BOOKED,PENDING,CONFIRMED)")
       .gte("start_time", new Date().toISOString())
       .order("start_time", { ascending: true })
       .limit(1)
@@ -1120,7 +1089,7 @@ Queres escolher outro dia? (ex: AMANHÃ ou 10/02)`, {
       const r = await (db as any)
         .from("appointments")
         .select("id,status,status_v2")
-        .eq("company_id", companyId)
+        .eq("owner_id", uid)
         .eq("customer_id", customer.id)
         .or("status_v2.eq.PENDING,status.eq.BOOKED")
         .order("created_at", { ascending: false })
@@ -1326,7 +1295,7 @@ const totalMinutes = picks.reduce((a: number, s: any) => a + Number(s.duration_m
 const totalCents = picks.reduce((a: number, s: any) => a + Number(s.price_cents ?? 0), 0);
 const names = picks.map((s: any) => String(s.name ?? "")).filter(Boolean);
 
-const nextCtx2 = {
+const nextCtx = {
   ...ctx,
   service_id: picks[0].id,
   service_ids: picks.map((s: any) => s.id),
@@ -1338,15 +1307,15 @@ const nextCtx2 = {
 };
 
     if (COMPANY_PLAN === "pro" && (ACTIVE_STAFF?.length ?? 0) > 1) {
-      return await sendStaffMenu(nextCtx2);
+      return await sendStaffMenu(nextCtx);
     }
 
-    await setSession("ASK_DAY", nextCtx2);
+    await setSession("ASK_DAY", nextCtx);
 
-    const price = formatPriceEur(nextCtx2.price_cents_total ?? 0);
+    const price = formatPriceEur(nextCtx.price_cents_total ?? 0);
     const pricePart = price ? ` (${price})` : "";
 
-    await replyAndLog(`✅ Serviço: *${nextCtx2.service_name}* (${nextCtx2.duration_minutes}min)${pricePart}\nAgora diz-me o dia (HOJE, AMANHÃ ou 10/02).`, {
+    await replyAndLog(`✅ Serviço: *${nextCtx.service_name}* (${nextCtx.duration_minutes}min)${pricePart}\nAgora diz-me o dia (HOJE, AMANHÃ ou 10/02).`, {
       step: "day",
     });
 
@@ -1519,10 +1488,8 @@ if (apptId && pickedIds.length > 1) {
     });
 
     const svcLine = ctx?.service_name ? `\nServiço: *${ctx.service_name}*` : "";
-    const durLine = ctx?.duration_minutes ? `\nDuração: *${ctx.duration_minutes}min*` : "";
-    const priceLine = (ctx as any)?.price_cents_total ? `\nTotal: *${formatPriceEur((ctx as any).price_cents_total)}*` : "";
     await replyAndLog(
-      `Combinado ✅\nFicou pré-reservado para *${formatDatePt(isoDate)}* às *${chosen.label}*.${svcLine}${durLine}${priceLine}\n\nConfirmas? Responde *SIM* ou *NÃO*.`,
+      `Combinado ✅\nFicou pré-reservado para *${formatDatePt(isoDate)}* às *${chosen.label}*.${svcLine}\n\nConfirmas? Responde *SIM* ou *NÃO*.`,
       { step: "confirm", appointment_id: apptId }
     );
 
