@@ -16,9 +16,8 @@ export default function NewClient() {
   const [minutes, setMinutes] = useState(30);
 
   // Modelo Solo: sem staff (1 dono)
-  const staffId = "";
-  const setStaff: any = () => {};
-  const setStaffId: any = () => {};
+  const [staff, setStaff] = useState<{ id: string; name: string }[]>([]);
+  const [staffId, setStaffId] = useState<string>("");
 
 
   const [slots, setSlots] = useState<{ label: string; startISO: string }[]>([]);
