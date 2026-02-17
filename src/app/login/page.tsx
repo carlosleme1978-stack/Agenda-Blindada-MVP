@@ -16,12 +16,14 @@ export default function Login() {
     () => ({
       width: "100%",
       maxWidth: 400,
-      background: "rgba(51, 54, 60, 0.82)",
-      border: "1px solid rgba(2,6,23,0.08)",
+      background: "rgba(0,0,0,0.22)",
+      border: "1px solid rgba(255,255,255,0.12)",
       borderRadius: 20,
       boxShadow:
-        "0 40px 80px rgba(2,6,23,0.12), 0 10px 24px rgba(1, 3, 9, 0.08)",
+        "0 40px 80px rgba(0,0,0,0.25), 0 10px 24px rgba(0,0,0,0.18)",
       padding: 24,
+      color: "rgba(255,255,255,0.92)",
+      backdropFilter: "blur(12px)",
     }),
     []
   );
@@ -30,17 +32,18 @@ export default function Login() {
     width: "100%",
     padding: "12px 12px",
     borderRadius: 12,
-    border: "1px solid rgba(2, 6, 23, 0.12)",
+    border: "1px solid rgba(255,255,255,0.14)",
     outline: "none",
     fontSize: 14,
-    background: "rgba(255, 253, 253, 0.95)",
+    background: "rgba(0,0,0,0.18)",
+    color: "rgba(255,255,255,0.92)",
   } as const;
 
   const buttonStyle = {
     width: "100%",
     padding: "12px 14px",
     borderRadius: 12,
-    border: "1px solid rgba(2, 6, 23, 0.10)",
+    border: "1px solid rgba(255,255,255,0.14)",
     cursor: "pointer",
     fontWeight: 800,
     letterSpacing: -0.2,
@@ -143,20 +146,20 @@ export default function Login() {
           {/* Right: Login form */}
           <div className="loginCard" style={cardStyle}>
             <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 800 }}>
+              <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 800 }}>
                 Entrar
               </div>
               <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: -0.4 }}>
                 Faça login para continuar
               </div>
-              <div style={{ marginTop: 6, fontSize: 13, opacity: 0.7 }}>
+              <div style={{ marginTop: 6, fontSize: 13, opacity: 0.75 }}>
                 Use as credenciais fornecidas para acessar o painel.
               </div>
             </div>
 
            <form onSubmit={onSubmit}>
   {/* EMAIL */}
-  <label style={{ fontSize: 13, fontWeight: 800 }}>Email</label>
+  <label style={{ fontSize: 13, fontWeight: 800, opacity: 0.9 }}>Email</label>
   <input
     style={{ ...inputStyle, marginTop: 6 }}
     value={email}
@@ -168,7 +171,7 @@ export default function Login() {
   <div style={{ height: 16 }} />
 
   {/* PASSWORD */}
-  <label style={{ fontSize: 13, fontWeight: 800 }}>Password</label>
+  <label style={{ fontSize: 13, fontWeight: 800, opacity: 0.9 }}>Password</label>
   <input
     type="password"
     style={{ ...inputStyle, marginTop: 6 }}
@@ -191,7 +194,7 @@ export default function Login() {
       style={{
         fontSize: 12,
         fontWeight: 600,
-        color: "#2563eb",
+        color: "rgba(147,197,253,0.95)",
         textDecoration: "none",
       }}
     >
@@ -219,9 +222,9 @@ export default function Login() {
       style={{
         marginTop: 14,
         marginBottom: 0,
-        color: "#b91c1c",
-        background: "rgba(185, 28, 28, 0.07)",
-        border: "1px solid rgba(185, 28, 28, 0.18)",
+        color: "rgba(254, 202, 202, 0.95)",
+        background: "rgba(185, 28, 28, 0.16)",
+        border: "1px solid rgba(185, 28, 28, 0.28)",
         padding: "10px 12px",
         borderRadius: 12,
         fontSize: 13,
@@ -232,8 +235,8 @@ export default function Login() {
   )}
 </form>
             
-            <div style={{ marginTop: 14, fontSize: 13, opacity: 0.8 }}>
-              Ainda não tem conta? <a href="/signup" style={{ fontWeight: 900 }}>Criar conta</a>
+            <div style={{ marginTop: 14, fontSize: 13, opacity: 0.85 }}>
+              Ainda não tem conta? <a href="/signup" style={{ fontWeight: 900, color: "rgba(255,255,255,0.95)" }}>Criar conta</a>
             </div>
 
 <div style={{ marginTop: 14, fontSize: 12, opacity: 0.65, lineHeight: 1.5 }}>
@@ -300,6 +303,10 @@ export default function Login() {
           min-width: 0;
           overflow-wrap: anywhere;
           word-break: break-word;
+        }
+
+        .loginCard :global(input::placeholder) {
+          color: rgba(255, 255, 255, 0.55);
         }
 
         .msg {

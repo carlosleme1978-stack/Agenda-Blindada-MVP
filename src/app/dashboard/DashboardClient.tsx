@@ -154,6 +154,23 @@ export default function DashboardClient({ initial }: { initial: DashboardInitial
     ];
   }, [companyFin]);
 
+  // ✅ Fix UI: nada de “cards brancos” no dashboard.
+  const sectionCard = {
+    borderRadius: 18,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(0,0,0,0.22)",
+    padding: 14,
+    color: "rgba(255,255,255,0.92)",
+    backdropFilter: "blur(10px)",
+  } as const;
+
+  const miniCard = {
+    padding: 12,
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(0,0,0,0.16)",
+  } as const;
+
   return (
     <main style={{ minHeight: "100vh", padding: 18, background: mood.pageBg }}>
       <div style={{ maxWidth: 1080, margin: "0 auto" }}>
@@ -241,7 +258,7 @@ export default function DashboardClient({ initial }: { initial: DashboardInitial
         </div>
 
         <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1.4fr 0.6fr", gap: 12 }}>
-          <div style={{ borderRadius: 18, border: "1px solid rgba(255,255,255,0.10)", background: "rgba(66, 59, 59, 0.92)", padding: 14 }}>
+          <div style={sectionCard}>
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <div>
                 <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Métricas</div>
@@ -251,30 +268,30 @@ export default function DashboardClient({ initial }: { initial: DashboardInitial
             </div>
 
             <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 }}>
-              <div style={{ padding: 12, borderRadius: 14, border: "1px solid rgba(2,6,23,0.08)", background: "rgba(2,6,23,0.02)" }}>
+              <div style={miniCard}>
                 <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Hoje</div>
                 <div style={{ marginTop: 4, fontSize: 20, fontWeight: 950 }}>{loading ? "…" : metrics.todayCount}</div>
               </div>
-              <div style={{ padding: 12, borderRadius: 14, border: "1px solid rgba(2,6,23,0.08)", background: "rgba(2,6,23,0.02)" }}>
+              <div style={miniCard}>
                 <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Semana</div>
                 <div style={{ marginTop: 4, fontSize: 20, fontWeight: 950 }}>{loading ? "…" : metrics.weekCount}</div>
               </div>
-              <div style={{ padding: 12, borderRadius: 14, border: "1px solid rgba(2,6,23,0.08)", background: "rgba(2,6,23,0.02)" }}>
+              <div style={miniCard}>
                 <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Receita hoje</div>
                 <div style={{ marginTop: 4, fontSize: 20, fontWeight: 950 }}>{loading ? "…" : eurFromCents(metrics.todayRevenueCents)}</div>
               </div>
-              <div style={{ padding: 12, borderRadius: 14, border: "1px solid rgba(2,6,23,0.08)", background: "rgba(2,6,23,0.02)" }}>
+              <div style={miniCard}>
                 <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Receita 7d</div>
                 <div style={{ marginTop: 4, fontSize: 20, fontWeight: 950 }}>{loading ? "…" : eurFromCents(metrics.weekRevenueCents)}</div>
               </div>
-              <div style={{ padding: 12, borderRadius: 14, border: "1px solid rgba(2,6,23,0.08)", background: "rgba(2,6,23,0.02)" }}>
+              <div style={miniCard}>
                 <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Cancel. 7d</div>
                 <div style={{ marginTop: 4, fontSize: 20, fontWeight: 950 }}>{loading ? "…" : metrics.cancelWeek}</div>
               </div>
             </div>
 
             <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div style={{ padding: 12, borderRadius: 14, border: "1px solid rgba(2,6,23,0.08)", background: "rgba(2,6,23,0.02)" }}>
+              <div style={miniCard}>
                 <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Insights</div>
                 <div style={{ marginTop: 6, display: "grid", gap: 6 }}>
                   {insights.length === 0 ? <div style={{ fontSize: 12, opacity: 0.7 }}>—</div> : null}
@@ -287,7 +304,7 @@ export default function DashboardClient({ initial }: { initial: DashboardInitial
                 </div>
               </div>
 
-              <div style={{ padding: 12, borderRadius: 14, border: "1px solid rgba(2,6,23,0.08)", background: "rgba(2,6,23,0.02)" }}>
+              <div style={miniCard}>
                 <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Top staff (6)</div>
                 <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
                   {staffPerf.length === 0 ? <div style={{ fontSize: 12, opacity: 0.7 }}>—</div> : null}
@@ -304,17 +321,17 @@ export default function DashboardClient({ initial }: { initial: DashboardInitial
             </div>
 
             <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <Link href="/dashboard/agenda" style={{ textDecoration: "none", fontWeight: 900 }}>
+              <Link href="/dashboard/agenda" style={{ textDecoration: "none", fontWeight: 900, color: "rgba(255,255,255,0.92)" }}>
                 Abrir agenda empresa →
               </Link>
               <span style={{ opacity: 0.35 }}>•</span>
-              <Link href="/dashboard/crm" style={{ textDecoration: "none", fontWeight: 900 }}>
+              <Link href="/dashboard/crm" style={{ textDecoration: "none", fontWeight: 900, color: "rgba(255,255,255,0.92)" }}>
                 Ver CRM →
               </Link>
             </div>
           </div>
 
-          <div style={{ borderRadius: 18, border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.92)", padding: 14 }}>
+          <div style={sectionCard}>
             <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 900 }}>Heatmap (28 dias)</div>
             <div style={{ marginTop: 6, fontSize: 16, fontWeight: 950, letterSpacing: -0.3 }}>Força por dia</div>
 
@@ -325,7 +342,7 @@ export default function DashboardClient({ initial }: { initial: DashboardInitial
                 return (
                   <div key={d.day} style={{ display: "grid", gridTemplateColumns: "46px 1fr 44px", gap: 10, alignItems: "center" }}>
                     <div style={{ fontSize: 12, fontWeight: 900 }}>{d.day}</div>
-                    <div style={{ height: 10, borderRadius: 999, background: "rgba(2,6,23,0.08)", overflow: "hidden" }}>
+                    <div style={{ height: 10, borderRadius: 999, background: "rgba(255,255,255,0.10)", overflow: "hidden" }}>
                       <div style={{ width: `${pct}%`, height: "100%", background: "rgba(59,130,246,0.55)" }} />
                     </div>
                     <div style={{ fontSize: 12, fontWeight: 900, textAlign: "right" }}>{d.count}</div>
