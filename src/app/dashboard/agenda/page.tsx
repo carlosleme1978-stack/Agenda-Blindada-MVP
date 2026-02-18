@@ -472,7 +472,7 @@ export default function AgendaPage() {
                               <div className="ab-muted" style={{ fontSize: 12, marginTop: 8, fontWeight: 950, paddingRight: 96, whiteSpace: "nowrap" }}>{time}</div>
                             </button>
                           );
-                          );
+                          
                         })}
 
                       {!loading && list.length === 0 ? (
