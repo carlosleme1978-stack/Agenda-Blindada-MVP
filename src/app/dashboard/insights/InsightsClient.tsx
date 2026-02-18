@@ -17,7 +17,7 @@ type PromoDraft = {
 };
 
 function dayNamePt(dow: number) {
-  return ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"][dow] ?? "Dia";
+  return ["Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"][dow] ?? "Dia";
 }
 
 function fmtEURFromCents(cents: number) {
