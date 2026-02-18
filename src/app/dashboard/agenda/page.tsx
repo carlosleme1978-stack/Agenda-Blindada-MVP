@@ -133,7 +133,7 @@ export default function AgendaPage() {
           console.warn("appointment_services load failed (fallback to snapshots):", error);
           setOpenServices([]);
         } else {
-          setOpenServices((data ?? []) as any);
+          setOpenServices(((data ?? []) as any) ?? []);
         }
       } catch (e) {
         console.warn("appointment_services load threw (fallback to snapshots):", e);
