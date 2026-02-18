@@ -435,7 +435,10 @@ export default function AgendaPage() {
                           const top = topFor(r.start_time);
                           const h = heightFor(r);
                           const name = r.customer_name_snapshot || r.customers?.name || "Cliente";
-                          const svc = r.service_name_snapshot || "Serviço";
+                          const svc = String(r.service_name_snapshot || "Serviço")
+                          .replace(/\s*\n\s*/g, " + ")
+                          .replace(/\s{2,}/g, " ")
+                          .trim();
                           const st = pill(r.status_v2 || r.status);
                           const end = r.end_time ? new Date(r.end_time) : null;
                           const time = `${fmtHM(new Date(r.start_time))}${end ? ` – ${fmtHM(end)}` : ""}`;
@@ -450,13 +453,13 @@ export default function AgendaPage() {
                               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
                                 <div>
                                   <div style={{ fontWeight: 980, letterSpacing: -0.2 }}>{name}</div>
-                                  <div className="ab-muted" style={{ fontSize: 12, marginTop: 2 }}>{svc}</div>
+                                  <div className="ab-muted" style={{ fontSize: 12, marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{svc}</div>
                                 </div>
                                 <div style={{ padding: "4px 8px", borderRadius: 999, border: `1px solid ${st.bd}`, background: st.bg, color: st.fg, fontWeight: 950, fontSize: 11, whiteSpace: "nowrap" }}>
                                   {st.label}
                                 </div>
                               </div>
-                              <div className="ab-muted" style={{ fontSize: 12, marginTop: 6, fontWeight: 900 }}>{time}</div>
+                              <div className="ab-muted" style={{ fontSize: 12, marginTop: 8, fontWeight: 950, whiteSpace: "nowrap" }}>{time}</div>
                             </button>
                           );
                         })}
