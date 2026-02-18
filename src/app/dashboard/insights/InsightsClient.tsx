@@ -3,6 +3,16 @@
 import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 
+type ApptRow = {
+  start_time: string;
+  status?: string | null;
+  status_v2?: string | null;
+  customer_name_snapshot?: string | null;
+  service_price_cents_snapshot?: number | null;
+  service_duration_minutes_snapshot?: number | null;
+  customers?: { name?: string | null; phone?: string | null } | null;
+};
+
 type InsightCardData = {
   title: string;
   subtitle: string;
@@ -15,12 +25,12 @@ type PromoDraft = {
   message: string;
 };
 
-function fmtEUR(v: number) {
-  const n = Number(v || 0);
+function fmtEURFromCents(cents: number) {
+  const v = Number(cents || 0) / 100;
   try {
-    return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(n);
+    return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(v);
   } catch {
-    return `€ ${n.toFixed(2)}`;
+    return `€ ${v.toFixed(2)}`;
   }
 }
 
@@ -28,16 +38,64 @@ function dayNamePt(dow: number) {
   return ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"][dow] ?? "Dia";
 }
 
-function pickNumber(row: any, keys: string[], fallback = 0) {
-  for (const k of keys) {
-    const v = row?.[k];
-    if (v === 0) return 0;
-    if (v !== undefined && v !== null && v !== "") {
-      const n = Number(v);
-      if (!Number.isNaN(n)) return n;
-    }
+function normStatus(a: ApptRow) {
+  const s = String(a.status_v2 ?? a.status ?? "").toUpperCase();
+  if (s.includes("NO_SHOW")) return "NO_SHOW";
+  if (s.includes("CANCEL")) return "CANCELLED";
+  if (s.includes("CONFIRM") || s.includes("BOOK")) return "CONFIRMED";
+  return s || "UNKNOWN";
+}
+
+function Icon({ kind }: { kind: "calendar" | "clock" | "users" | "alert" }) {
+  // Fixed-size inline SVG (won't blow up due to global styles)
+  const size = 22;
+  const common = { width: size, height: size, display: "block" as const };
+  const stroke = "currentColor";
+  const sw = 1.6;
+
+  if (kind === "calendar") {
+    return (
+      <svg style={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M7 3v3M17 3v3" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
+        <path d="M4.5 8.5h15" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
+        <path
+          d="M6.5 5.5h11A2.5 2.5 0 0 1 20 8v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 19V8A2.5 2.5 0 0 1 6.5 5.5Z"
+          stroke={stroke}
+          strokeWidth={sw}
+        />
+      </svg>
+    );
   }
-  return fallback;
+
+  if (kind === "clock") {
+    return (
+      <svg style={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z" stroke={stroke} strokeWidth={sw} />
+        <path d="M12 7v5l3 2" stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+
+  if (kind === "users") {
+    return (
+      <svg style={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0Z" stroke={stroke} strokeWidth={sw} />
+        <path d="M4 21a8 8 0 0 1 16 0" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg style={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 9v4" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
+      <path d="M12 17h.01" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
+      <path
+        d="M10.3 3.8 2.6 17.1A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.9L13.7 3.8a2 2 0 0 0-3.4 0Z"
+        stroke={stroke}
+        strokeWidth={sw}
+      />
+    </svg>
+  );
 }
 
 export default function InsightsClient() {
@@ -60,47 +118,47 @@ export default function InsightsClient() {
       setError(null);
 
       try {
+        const { data: sess } = await supabase.auth.getSession();
+        const uid = sess.session?.user?.id;
+        if (!uid) {
+          window.location.href = "/login";
+          return;
+        }
+        const ownerId = uid;
+
         const since = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
 
-        // IMPORTANT: use '*' to avoid "column does not exist" across different schemas
-        const { data: appts, error: apptErr } = await supabase
+        const { data: apptsRaw, error: apptErr } = await supabase
           .from("appointments")
-          .select("*")
+          .select(
+            "start_time,status,status_v2,customer_name_snapshot,service_price_cents_snapshot,service_duration_minutes_snapshot,customers(name,phone)"
+          )
+          .eq("owner_id", ownerId)
           .gte("start_time", since.toISOString())
-          .order("start_time", { ascending: true });
+          .order("start_time", { ascending: true })
+          .limit(4000);
 
         if (apptErr) throw apptErr;
 
-        const list: any[] = appts ?? [];
+        const list = (apptsRaw ?? []) as unknown as ApptRow[];
 
         const byDow = new Array(7).fill(0);
         const byHour = new Map<number, number>();
 
-        let noShowLoss = 0;
+        let noShowLossCents = 0;
         let noShowMinutes = 0;
 
         for (const a of list) {
-          const st = new Date(a.start_time ?? a.start ?? a.date ?? Date.now());
+          const st = new Date(a.start_time);
           const dow = st.getDay();
           const hr = st.getHours();
 
           byDow[dow] += 1;
           byHour.set(hr, (byHour.get(hr) ?? 0) + 1);
 
-          const status = String(a.status_v2 ?? a.status ?? "").toUpperCase();
-          if (status === "NO_SHOW") {
-            const price = pickNumber(a, [
-              "total_price_snapshot",
-              "total_price",
-              "total",
-              "price_total",
-              "amount_total",
-              "value_total",
-              "price",
-            ]);
-            const mins = pickNumber(a, ["service_duration_minutes_snapshot", "duration_minutes", "duration", "minutes"], 0);
-            noShowLoss += price;
-            noShowMinutes += mins;
+          if (normStatus(a) === "NO_SHOW") {
+            noShowLossCents += Number(a.service_price_cents_snapshot ?? 0);
+            noShowMinutes += Number(a.service_duration_minutes_snapshot ?? 0);
           }
         }
 
@@ -122,25 +180,30 @@ export default function InsightsClient() {
         const beforeAvg = before.length ? before.reduce((s, v) => s + v, 0) / before.length : 0;
         const weakAfterPct = beforeAvg > 0 ? Math.round(((afterAvg - beforeAvg) / beforeAvg) * 100) : 0;
 
-        // Inactive clients: last 90d, inactive >30d
+        // Inactive clients: last 90d, inactive >30d (use customers relation + snapshot)
         const since90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
         const { data: ap90, error: ap90Err } = await supabase
           .from("appointments")
-          .select("client_name,client_phone,start_time")
+          .select("start_time,customer_name_snapshot,customers(name,phone)")
+          .eq("owner_id", ownerId)
           .gte("start_time", since90.toISOString())
-          .order("start_time", { ascending: false });
+          .order("start_time", { ascending: false })
+          .limit(8000);
 
         if (ap90Err) throw ap90Err;
 
         const byClient = new Map<string, { name: string; last: number }>();
-        for (const a of ap90 ?? []) {
-          const name = (a as any).client_name ?? "Cliente";
-          const phone = (a as any).client_phone ?? "";
-          const key = `${phone}__${name}`;
-          const t = new Date((a as any).start_time).getTime();
+
+        for (const r of (ap90 ?? []) as any[]) {
+          const name =
+            String(r?.customers?.name ?? r?.customer_name_snapshot ?? "Cliente").trim() || "Cliente";
+          const phone = String(r?.customers?.phone ?? "").trim();
+          const key = `${phone || "no_phone"}__${name}`;
+          const t = new Date(r.start_time).getTime();
           const prev = byClient.get(key);
           if (!prev || t > prev.last) byClient.set(key, { name, last: t });
         }
+
         const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
         const inactive = Array.from(byClient.values())
           .filter((c) => c.last < cutoff)
@@ -174,7 +237,7 @@ export default function InsightsClient() {
           },
           d: {
             title: `${noShowHours || 0} horas perdidas este mês`,
-            subtitle: `${fmtEUR(noShowLoss || 0)} em no-shows`,
+            subtitle: `${fmtEURFromCents(noShowLossCents || 0)} em no-shows`,
           },
         };
 
@@ -223,37 +286,39 @@ export default function InsightsClient() {
 
   return (
     <div className="mx-auto w-full max-w-6xl px-6 py-8">
-      <div className="mb-6">
+      <div className="mb-8">
         <div className="text-sm text-white/70">Dashboard</div>
         <h1 className="text-5xl font-semibold tracking-tight text-white">Insights</h1>
       </div>
 
       {error ? (
-        <div className="mb-6 rounded-2xl border border-red-500/30 bg-red-950/30 px-4 py-3 text-red-100">{error}</div>
+        <div className="rounded-2xl border border-red-500/30 bg-red-950/30 px-4 py-3 text-red-100">{error}</div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <Card
-          icon="📅"
-          title={loading ? "—" : cards.a?.title ?? "—"}
-          subtitle={loading ? " " : cards.a?.subtitle ?? "—"}
-          buttonLabel={cards.a?.cta?.label}
-          onButton={() => openPromo()}
-        />
-        <Card icon="⏰" title={loading ? "—" : cards.b?.title ?? "—"} subtitle={loading ? " " : cards.b?.subtitle ?? "—"} />
-        <Card
-          icon="👥"
-          title={loading ? "—" : cards.c?.title ?? "—"}
-          subtitle={loading ? " " : cards.c?.subtitle ?? "—"}
-          lines={!loading ? cards.c?.lines ?? [] : []}
-          buttonLabel={cards.c?.cta?.label}
-          onButton={() => {
-            setPromo((p) => ({ ...p, audience: "inactive_30" }));
-            openPromo();
-          }}
-        />
-        <Card icon="⚠️" title={loading ? "—" : cards.d?.title ?? "—"} subtitle={loading ? " " : cards.d?.subtitle ?? "—"} />
-      </div>
+      {!error ? (
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+          <Card
+            icon={<Icon kind="calendar" />}
+            title={loading ? "—" : cards.a?.title ?? "—"}
+            subtitle={loading ? " " : cards.a?.subtitle ?? "—"}
+            buttonLabel={cards.a?.cta?.label}
+            onButton={openPromo}
+          />
+          <Card icon={<Icon kind="clock" />} title={loading ? "—" : cards.b?.title ?? "—"} subtitle={loading ? " " : cards.b?.subtitle ?? "—"} />
+          <Card
+            icon={<Icon kind="users" />}
+            title={loading ? "—" : cards.c?.title ?? "—"}
+            subtitle={loading ? " " : cards.c?.subtitle ?? "—"}
+            lines={!loading ? cards.c?.lines ?? [] : []}
+            buttonLabel={cards.c?.cta?.label}
+            onButton={() => {
+              setPromo((p) => ({ ...p, audience: "inactive_30" }));
+              openPromo();
+            }}
+          />
+          <Card icon={<Icon kind="alert" />} title={loading ? "—" : cards.d?.title ?? "—"} subtitle={loading ? " " : cards.d?.subtitle ?? "—"} />
+        </div>
+      ) : null}
 
       {promoOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -327,7 +392,7 @@ export default function InsightsClient() {
 }
 
 function Card(props: {
-  icon: string;
+  icon: React.ReactNode;
   title: string;
   subtitle: string;
   lines?: string[];
@@ -337,9 +402,9 @@ function Card(props: {
   const { icon, title, subtitle, lines, buttonLabel, onButton } = props;
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-7 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-8 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
       <div className="mb-2 flex items-start gap-4">
-        <div className="mt-1 select-none text-2xl text-[var(--ab-gold)]">{icon}</div>
+        <div className="mt-1 text-[var(--ab-gold)]">{icon}</div>
         <div className="min-w-0">
           <div className="text-3xl font-semibold leading-tight text-white">{title}</div>
           <div className="mt-3 text-lg text-white/60">{subtitle}</div>
