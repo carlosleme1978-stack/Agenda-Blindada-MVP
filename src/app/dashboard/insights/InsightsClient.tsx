@@ -3,11 +3,11 @@
 import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 
-type Insight = {
-  key: "weak_day" | "weak_hour" | "inactive_clients" | "no_show_loss";
+type InsightCardData = {
   title: string;
   subtitle: string;
-  detail?: string[];
+  lines?: string[];
+  cta?: { label: string; kind: "promo" | "inactive" };
 };
 
 type PromoDraft = {
@@ -16,10 +16,11 @@ type PromoDraft = {
 };
 
 function fmtEUR(v: number) {
+  const n = Number(v || 0);
   try {
-    return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(v);
+    return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(n);
   } catch {
-    return `€ ${Number(v || 0).toFixed(2)}`;
+    return `€ ${n.toFixed(2)}`;
   }
 }
 
@@ -27,63 +28,24 @@ function dayNamePt(dow: number) {
   return ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"][dow] ?? "Dia";
 }
 
-function Icon({ name }: { name: "calendar" | "clock" | "users" | "alert" }) {
-  const common = "h-7 w-7";
-  const stroke = "currentColor";
-  const sw = 1.6;
-
-  if (name === "calendar") {
-    return (
-      <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M7 3v3M17 3v3" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
-        <path d="M4.5 8.5h15" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
-        <path
-          d="M6.5 5.5h11A2.5 2.5 0 0 1 20 8v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 19V8A2.5 2.5 0 0 1 6.5 5.5Z"
-          stroke={stroke}
-          strokeWidth={sw}
-        />
-      </svg>
-    );
+function pickNumber(row: any, keys: string[], fallback = 0) {
+  for (const k of keys) {
+    const v = row?.[k];
+    if (v === 0) return 0;
+    if (v !== undefined && v !== null && v !== "") {
+      const n = Number(v);
+      if (!Number.isNaN(n)) return n;
+    }
   }
-
-  if (name === "clock") {
-    return (
-      <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z" stroke={stroke} strokeWidth={sw} />
-        <path d="M12 7v5l3 2" stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    );
-  }
-
-  if (name === "users") {
-    return (
-      <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0Z" stroke={stroke} strokeWidth={sw} />
-        <path d="M4 21a8 8 0 0 1 16 0" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
-      </svg>
-    );
-  }
-
-  return (
-    <svg className={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M12 9v4" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
-      <path d="M12 17h.01" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
-      <path
-        d="M10.3 3.8 2.6 17.1A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.9L13.7 3.8a2 2 0 0 0-3.4 0Z"
-        stroke={stroke}
-        strokeWidth={sw}
-      />
-    </svg>
-  );
+  return fallback;
 }
 
 export default function InsightsClient() {
-  // In this codebase, supabaseBrowser is a client instance (not a function).
   const supabase = supabaseBrowser;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [insights, setInsights] = useState<Record<string, Insight>>({});
+  const [cards, setCards] = useState<Record<string, InsightCardData>>({});
 
   const [promoOpen, setPromoOpen] = useState(false);
   const [promo, setPromo] = useState<PromoDraft>({ audience: "inactive_30", message: "" });
@@ -100,9 +62,10 @@ export default function InsightsClient() {
       try {
         const since = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
 
+        // IMPORTANT: use '*' to avoid "column does not exist" across different schemas
         const { data: appts, error: apptErr } = await supabase
           .from("appointments")
-          .select("start_time,status_v2,total_price_snapshot,service_duration_minutes_snapshot,client_name,client_phone")
+          .select("*")
           .gte("start_time", since.toISOString())
           .order("start_time", { ascending: true });
 
@@ -117,16 +80,27 @@ export default function InsightsClient() {
         let noShowMinutes = 0;
 
         for (const a of list) {
-          const st = new Date(a.start_time);
+          const st = new Date(a.start_time ?? a.start ?? a.date ?? Date.now());
           const dow = st.getDay();
           const hr = st.getHours();
 
           byDow[dow] += 1;
           byHour.set(hr, (byHour.get(hr) ?? 0) + 1);
 
-          if (String(a.status_v2).toUpperCase() === "NO_SHOW") {
-            noShowLoss += Number(a.total_price_snapshot ?? 0);
-            noShowMinutes += Number(a.service_duration_minutes_snapshot ?? 0);
+          const status = String(a.status_v2 ?? a.status ?? "").toUpperCase();
+          if (status === "NO_SHOW") {
+            const price = pickNumber(a, [
+              "total_price_snapshot",
+              "total_price",
+              "total",
+              "price_total",
+              "amount_total",
+              "value_total",
+              "price",
+            ]);
+            const mins = pickNumber(a, ["service_duration_minutes_snapshot", "duration_minutes", "duration", "minutes"], 0);
+            noShowLoss += price;
+            noShowMinutes += mins;
           }
         }
 
@@ -148,6 +122,7 @@ export default function InsightsClient() {
         const beforeAvg = before.length ? before.reduce((s, v) => s + v, 0) / before.length : 0;
         const weakAfterPct = beforeAvg > 0 ? Math.round(((afterAvg - beforeAvg) / beforeAvg) * 100) : 0;
 
+        // Inactive clients: last 90d, inactive >30d
         const since90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
         const { data: ap90, error: ap90Err } = await supabase
           .from("appointments")
@@ -175,38 +150,36 @@ export default function InsightsClient() {
 
         const noShowHours = Math.round(noShowMinutes / 60);
 
-        const out: Record<string, Insight> = {
-          weak_day: {
-            key: "weak_day",
-            title: `${dayNamePt(weakDow)} é seu dia mais fraco`,
+        const weakDayName = dayNamePt(weakDow);
+        const msg =
+          `Olá! 😊\n` +
+          `Esta semana estamos com um horário especial na ${weakDayName}.\n` +
+          `Quer aproveitar uma condição promocional? Responda aqui e eu já encaixo você no melhor horário.`;
+
+        const built: Record<string, InsightCardData> = {
+          a: {
+            title: `${weakDayName} é seu dia mais fraco`,
             subtitle: avg > 0 ? `${weakPct}% menos que a média semanal` : "Sem dados suficientes",
+            cta: { label: "Criar promoção", kind: "promo" },
           },
-          weak_hour: {
-            key: "weak_hour",
+          b: {
             title: "Horário depois das 16h30 está deficitário",
-            subtitle: beforeAvg > 0 ? `${weakAfterPct}% menos ocupado` : "Sem dados suficientes",
+            subtitle: beforeAvg > 0 ? `${weakAfterPct}% menos ocupado` : "Baseado nas últimas 4 semanas",
           },
-          inactive_clients: {
-            key: "inactive_clients",
+          c: {
             title: `${inactive.length} Clientes inativos`,
             subtitle: "não retornam há mais de 30 dias",
-            detail: inactive,
+            lines: inactive,
+            cta: { label: "Ver Clientes Inativos", kind: "inactive" },
           },
-          no_show_loss: {
-            key: "no_show_loss",
+          d: {
             title: `${noShowHours || 0} horas perdidas este mês`,
             subtitle: `${fmtEUR(noShowLoss || 0)} em no-shows`,
           },
         };
 
-        const wd = dayNamePt(weakDow);
-        const msg =
-          `Olá! 😊\n` +
-          `Esta semana estamos com um horário especial na ${wd}.\n` +
-          `Quer aproveitar uma condição promocional? Responda aqui e eu já encaixo você no melhor horário.`;
-
         if (!alive) return;
-        setInsights(out);
+        setCards(built);
         setPromo((p) => ({ ...p, message: msg }));
       } catch (e: any) {
         if (!alive) return;
@@ -232,7 +205,6 @@ export default function InsightsClient() {
   async function sendPromo() {
     setSendState("sending");
     setSendMsg("");
-
     try {
       const res = await fetch("/api/insights/send-promo", {
         method: "POST",
@@ -241,7 +213,6 @@ export default function InsightsClient() {
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j?.error ?? "Falha ao enviar.");
-
       setSendState("sent");
       setSendMsg(j?.message ?? "Promoção preparada.");
     } catch (e: any) {
@@ -258,41 +229,30 @@ export default function InsightsClient() {
       </div>
 
       {error ? (
-        <div className="rounded-2xl border border-red-500/30 bg-red-950/30 px-4 py-3 text-red-100">{error}</div>
+        <div className="mb-6 rounded-2xl border border-red-500/30 bg-red-950/30 px-4 py-3 text-red-100">{error}</div>
       ) : null}
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <Card
-          icon={<Icon name="calendar" />}
-          title={loading ? "—" : insights.weak_day?.title ?? "—"}
-          subtitle={loading ? " " : insights.weak_day?.subtitle ?? "—"}
-          buttonLabel="Criar promoção"
-          onButton={openPromo}
+          icon="📅"
+          title={loading ? "—" : cards.a?.title ?? "—"}
+          subtitle={loading ? " " : cards.a?.subtitle ?? "—"}
+          buttonLabel={cards.a?.cta?.label}
+          onButton={() => openPromo()}
         />
-
+        <Card icon="⏰" title={loading ? "—" : cards.b?.title ?? "—"} subtitle={loading ? " " : cards.b?.subtitle ?? "—"} />
         <Card
-          icon={<Icon name="clock" />}
-          title={loading ? "—" : insights.weak_hour?.title ?? "—"}
-          subtitle={loading ? " " : insights.weak_hour?.subtitle ?? "—"}
-        />
-
-        <Card
-          icon={<Icon name="users" />}
-          title={loading ? "—" : insights.inactive_clients?.title ?? "—"}
-          subtitle={loading ? " " : insights.inactive_clients?.subtitle ?? "—"}
-          lines={!loading ? insights.inactive_clients?.detail ?? [] : []}
-          buttonLabel="Ver Clientes Inativos"
+          icon="👥"
+          title={loading ? "—" : cards.c?.title ?? "—"}
+          subtitle={loading ? " " : cards.c?.subtitle ?? "—"}
+          lines={!loading ? cards.c?.lines ?? [] : []}
+          buttonLabel={cards.c?.cta?.label}
           onButton={() => {
             setPromo((p) => ({ ...p, audience: "inactive_30" }));
             openPromo();
           }}
         />
-
-        <Card
-          icon={<Icon name="alert" />}
-          title={loading ? "—" : insights.no_show_loss?.title ?? "—"}
-          subtitle={loading ? " " : insights.no_show_loss?.subtitle ?? "—"}
-        />
+        <Card icon="⚠️" title={loading ? "—" : cards.d?.title ?? "—"} subtitle={loading ? " " : cards.d?.subtitle ?? "—"} />
       </div>
 
       {promoOpen ? (
@@ -367,7 +327,7 @@ export default function InsightsClient() {
 }
 
 function Card(props: {
-  icon: React.ReactNode;
+  icon: string;
   title: string;
   subtitle: string;
   lines?: string[];
@@ -377,17 +337,17 @@ function Card(props: {
   const { icon, title, subtitle, lines, buttonLabel, onButton } = props;
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-6 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
-      <div className="mb-3 flex items-start gap-3">
-        <div className="mt-1 text-[var(--ab-gold)]">{icon}</div>
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-7 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
+      <div className="mb-2 flex items-start gap-4">
+        <div className="mt-1 select-none text-2xl text-[var(--ab-gold)]">{icon}</div>
         <div className="min-w-0">
           <div className="text-3xl font-semibold leading-tight text-white">{title}</div>
-          <div className="mt-2 text-lg text-white/60">{subtitle}</div>
+          <div className="mt-3 text-lg text-white/60">{subtitle}</div>
         </div>
       </div>
 
       {lines && lines.length ? (
-        <div className="mt-4 space-y-2 text-base text-white/85">
+        <div className="mt-5 space-y-3 text-base text-white/85">
           {lines.map((l, idx) => (
             <div key={idx}>{l}</div>
           ))}
@@ -395,10 +355,10 @@ function Card(props: {
       ) : null}
 
       {buttonLabel && onButton ? (
-        <div className="mt-5">
+        <div className="mt-6">
           <button
             onClick={onButton}
-            className="rounded-xl border border-[var(--ab-gold)]/40 bg-[rgba(255,255,255,0.03)] px-4 py-2 text-sm font-semibold text-[var(--ab-gold)] hover:bg-[rgba(255,255,255,0.06)]"
+            className="rounded-xl border border-[var(--ab-gold)]/40 bg-[rgba(255,255,255,0.03)] px-5 py-2.5 text-sm font-semibold text-[var(--ab-gold)] hover:bg-[rgba(255,255,255,0.06)]"
           >
             {buttonLabel}
           </button>

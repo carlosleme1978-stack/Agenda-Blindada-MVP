@@ -3,8 +3,6 @@ import { NextResponse } from "next/server";
 /**
  * Body:
  * { message: string; audience: "inactive_30" | "all_recent" }
- *
- * Returns OK. Wire to WhatsApp sender later.
  */
 export async function POST(req: Request) {
   try {
@@ -16,16 +14,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Mensagem vazia." }, { status: 400 });
     }
 
-    // Optional: if your project has a WhatsApp sender module, wire it here.
+    // Optional: wire to WhatsApp sender if exists.
     let sent = 0;
     try {
       const mod: any = await import("@/lib/whatsapp/send").catch(() => null);
       if (mod?.sendPromoToAudience) {
         sent = await mod.sendPromoToAudience({ message, audience });
       }
-    } catch {
-      // noop
-    }
+    } catch {}
 
     return NextResponse.json({
       ok: true,
