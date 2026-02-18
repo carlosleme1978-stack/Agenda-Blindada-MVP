@@ -16,17 +16,6 @@ type PromoDraft = {
   message: string;
 };
 
-function ymdLisbon(d: Date) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Lisbon",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(d);
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-  return `${get("year")}-${get("month")}-${get("day")}`;
-}
-
 function dayNamePt(dow: number) {
   return ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"][dow] ?? "Dia";
 }
@@ -40,11 +29,14 @@ function fmtEURFromCents(cents: number) {
   }
 }
 
-function pctLess(weak: number, avg: number) {
+/** returns percent less (0..100), or null if not enough data */
+function pctLess(weak: number, avg: number, total: number) {
   if (!avg || avg <= 0) return null;
+  // if very low sample, avoid misleading -100%
+  if (total < 6) return null;
   if (weak >= avg) return 0;
   const p = Math.round((1 - weak / avg) * 100);
-  return p;
+  return Math.max(0, Math.min(100, p));
 }
 
 function Icon({ name, color }: { name: CardData["icon"]; color: string }) {
@@ -136,9 +128,10 @@ export default function InsightsClient() {
         const since = new Date();
         since.setDate(since.getDate() - 28);
 
+        // IMPORTANT: ONLY fields that exist (per your screenshot)
         const { data: appts, error: apptErr } = await sb
           .from("appointments")
-          .select("start_time,status,status_v2,service_price_cents_snapshot,service_duration_minutes_snapshot,customer_id,customer_name_snapshot,customer_phone_snapshot")
+          .select("start_time,status,status_v2,is_no_show,service_price_cents_snapshot,service_duration_minutes_snapshot,customer_id,customer_name_snapshot")
           .eq("owner_id", ownerId)
           .gte("start_time", since.toISOString())
           .limit(5000);
@@ -160,14 +153,15 @@ export default function InsightsClient() {
 
           const sv2 = String(a.status_v2 ?? "").toUpperCase();
           const s = String(a.status ?? "").toUpperCase();
-          const isNoShow = sv2 === "NO_SHOW" || s === "NO_SHOW";
+          const isNoShow = Boolean(a.is_no_show) || sv2 === "NO_SHOW" || s === "NO_SHOW";
           if (isNoShow) {
             noShowCents += Number(a.service_price_cents_snapshot ?? 0);
             noShowMinutes += Number(a.service_duration_minutes_snapshot ?? 0);
           }
         }
 
-        const avg = byDow.reduce((s, v) => s + v, 0) / 7;
+        const totalAppts = list.length;
+        const avg = byDow.reduce((sum, v) => sum + v, 0) / 7;
 
         // weak day
         let weakDow = 0;
@@ -179,7 +173,7 @@ export default function InsightsClient() {
           }
         }
         const weakDayName = dayNamePt(weakDow);
-        const weakDayPct = pctLess(weakCount === Infinity ? 0 : weakCount, avg);
+        const weakDayPct = pctLess(weakCount === Infinity ? 0 : weakCount, avg, totalAppts);
 
         // weak after 16h30 proxy: compare >=17 vs <17
         const entries = Array.from(byHour.entries());
@@ -187,15 +181,15 @@ export default function InsightsClient() {
         const before = entries.filter(([h]) => h < 17).map(([, c]) => c);
         const afterAvg = after.length ? after.reduce((s, v) => s + v, 0) / after.length : 0;
         const beforeAvg = before.length ? before.reduce((s, v) => s + v, 0) / before.length : 0;
-        const weakAfterPct = pctLess(afterAvg, beforeAvg);
+        const weakAfterPct = pctLess(afterAvg, beforeAvg, totalAppts);
 
-        // inactive clients: use customers + appointments last 180d (same logic of CRM)
+        // inactive clients: use customers table + last appointment from last 180d
         const { data: custRows, error: custErr } = await sb
           .from("customers")
-          .select("id,name,phone,created_at")
+          .select("id,name,created_at")
           .eq("owner_id", ownerId)
           .order("created_at", { ascending: false })
-          .limit(1200);
+          .limit(2000);
 
         if (custErr) throw custErr;
 
@@ -238,7 +232,7 @@ export default function InsightsClient() {
         const c1: CardData = {
           icon: "calendar",
           title: `${weakDayName} é seu dia mais fraco`,
-          subtitle: weakDayPct === null ? "Sem dados suficientes" : `-${weakDayPct}% menos que a média semanal`,
+          subtitle: weakDayPct === null ? "Baseado nas últimas 4 semanas" : `-${weakDayPct}% menos que a média semanal`,
           cta: { label: "Criar promoção", kind: "promo" },
         };
 
@@ -334,7 +328,6 @@ export default function InsightsClient() {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
     padding: "10px 14px",
     borderRadius: 10,
     border: "1px solid rgba(234,179,8,0.35)",
@@ -343,7 +336,6 @@ export default function InsightsClient() {
     fontWeight: 900,
     fontSize: 13,
     cursor: "pointer",
-    textDecoration: "none",
   } as const;
 
   return (
@@ -354,7 +346,16 @@ export default function InsightsClient() {
       </div>
 
       {error ? (
-        <div style={{ padding: 14, borderRadius: 14, border: "1px solid rgba(239,68,68,0.35)", background: "rgba(127,29,29,0.35)", color: "white", marginBottom: 16 }}>
+        <div
+          style={{
+            padding: 14,
+            borderRadius: 14,
+            border: "1px solid rgba(239,68,68,0.35)",
+            background: "rgba(127,29,29,0.35)",
+            color: "white",
+            marginBottom: 16,
+          }}
+        >
           {error}
         </div>
       ) : null}
@@ -368,6 +369,7 @@ export default function InsightsClient() {
                 <div style={iconWrap}>
                   <Icon name={isLoading ? "calendar" : c.icon} color={palette.gold} />
                 </div>
+
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 34, fontWeight: 950, lineHeight: 1.08 }}>
                     {isLoading ? "—" : c.title}
@@ -379,7 +381,9 @@ export default function InsightsClient() {
                   {!isLoading && c.lines && c.lines.length ? (
                     <div style={{ marginTop: 18, display: "grid", gap: 10, fontSize: 18 }}>
                       {c.lines.map((l: string, i: number) => (
-                        <div key={i} style={{ opacity: 0.92 }}>{l}</div>
+                        <div key={i} style={{ opacity: 0.92 }}>
+                          {l}
+                        </div>
                       ))}
                     </div>
                   ) : null}
@@ -399,8 +403,28 @@ export default function InsightsClient() {
       </div>
 
       {promoOpen ? (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.60)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div style={{ width: "100%", maxWidth: 620, borderRadius: 18, border: `1px solid ${palette.border}`, background: "rgba(12,16,24,0.92)", padding: 18 }}>
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.60)",
+            zIndex: 50,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 620,
+              borderRadius: 18,
+              border: `1px solid ${palette.border}`,
+              background: "rgba(12,16,24,0.92)",
+              padding: 18,
+            }}
+          >
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
               <div>
                 <div style={{ fontSize: 18, fontWeight: 950 }}>Criar promoção</div>
@@ -408,7 +432,15 @@ export default function InsightsClient() {
               </div>
               <button
                 onClick={() => setPromoOpen(false)}
-                style={{ padding: "8px 10px", borderRadius: 10, border: `1px solid ${palette.border}`, background: palette.cardBg2, color: "rgba(255,255,255,0.85)", fontWeight: 900, cursor: "pointer" }}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 10,
+                  border: `1px solid ${palette.border}`,
+                  background: palette.cardBg2,
+                  color: "rgba(255,255,255,0.85)",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
               >
                 Fechar
               </button>
@@ -420,7 +452,15 @@ export default function InsightsClient() {
                 <select
                   value={promo.audience}
                   onChange={(e) => setPromo((p) => ({ ...p, audience: e.target.value as any }))}
-                  style={{ height: 44, borderRadius: 12, border: `1px solid ${palette.border}`, background: palette.cardBg2, color: "white", padding: "0 12px", outline: "none" }}
+                  style={{
+                    height: 44,
+                    borderRadius: 12,
+                    border: `1px solid ${palette.border}`,
+                    background: palette.cardBg2,
+                    color: "white",
+                    padding: "0 12px",
+                    outline: "none",
+                  }}
                 >
                   <option value="inactive_30">Clientes inativos (+30 dias)</option>
                   <option value="all_recent">Todos clientes recentes (90 dias)</option>
@@ -433,7 +473,16 @@ export default function InsightsClient() {
                   value={promo.message}
                   onChange={(e) => setPromo((p) => ({ ...p, message: e.target.value }))}
                   rows={7}
-                  style={{ borderRadius: 12, border: `1px solid ${palette.border}`, background: palette.cardBg2, color: "white", padding: 12, outline: "none", fontSize: 14, lineHeight: 1.4 }}
+                  style={{
+                    borderRadius: 12,
+                    border: `1px solid ${palette.border}`,
+                    background: palette.cardBg2,
+                    color: "white",
+                    padding: 12,
+                    outline: "none",
+                    fontSize: 14,
+                    lineHeight: 1.4,
+                  }}
                 />
               </label>
 

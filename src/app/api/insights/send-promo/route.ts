@@ -12,14 +12,12 @@ export async function POST(req: Request) {
 
     if (!message) return NextResponse.json({ error: "Mensagem vazia." }, { status: 400 });
 
-    // Wire to WhatsApp sender later (endpoint ready).
-    let sent = 0;
-
+    // Endpoint ready. Wire to WhatsApp sender later.
     return NextResponse.json({
       ok: true,
-      sent,
-      message: sent ? `Promoção enviada para ${sent} contatos.` : "Promoção preparada (envio ainda não configurado).",
+      sent: 0,
       audience,
+      message: "Promoção preparada (envio ainda não configurado).",
     });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Erro inesperado." }, { status: 500 });
