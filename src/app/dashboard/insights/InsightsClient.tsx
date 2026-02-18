@@ -290,15 +290,27 @@ export default function InsightsClient() {
     setSendState("sending");
     setSendMsg("");
     try {
+      const { data: sess } = await sb.auth.getSession();
+      const token = sess?.session?.access_token;
+
+      if (!token) {
+        setSendState("failed");
+        setSendMsg("Sessão expirada. Faça login novamente.");
+        return;
+      }
+
       const res = await fetch("/api/insights/send-promo", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify(promo),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j?.error ?? "Falha ao enviar.");
       setSendState("sent");
-      setSendMsg(j?.message ?? "Promoção preparada.");
+      setSendMsg(j?.message ?? "Promoção enviada.");
     } catch (e: any) {
       setSendState("failed");
       setSendMsg(e?.message ?? "Falha ao enviar.");
