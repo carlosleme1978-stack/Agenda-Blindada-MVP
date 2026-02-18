@@ -94,7 +94,7 @@ function cardStyle(strong?: boolean): React.CSSProperties {
 }
 
 export default function Clientes360Page() {
-  const supabase = supabaseBrowser;
+  const supabase = supabaseBrowser();
 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
