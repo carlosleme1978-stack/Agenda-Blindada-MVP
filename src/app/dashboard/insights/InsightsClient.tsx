@@ -290,9 +290,14 @@ export default function InsightsClient() {
     setSendState("sending");
     setSendMsg("");
     try {
+      const { data: s } = await sb.auth.getSession();
+      const token = s?.session?.access_token;
       const res = await fetch("/api/insights/send-promo", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ` } : {}),
+        },
         body: JSON.stringify(promo),
       });
       const j = await res.json().catch(() => ({}));
