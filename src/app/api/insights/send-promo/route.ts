@@ -179,6 +179,25 @@ export async function POST(req: Request) {
       });
     }
 
+
+    // ✅ Dedupe por telefone (importante):
+    // O webhook resolve o customer mais recente pelo phone.
+    // Se houver clientes duplicados com o mesmo número, garantimos que:
+    // 1) enviamos apenas 1x por número
+    // 2) gravamos a sessão PROMO_OFFER no customer mais recente (o primeiro da lista, pois está order(created_at desc))
+    {
+      const seen = new Set<string>();
+      const unique: any[] = [];
+      for (const c of target) {
+        const digits = String((c as any).phone ?? "").replace(/\D/g, "");
+        if (!digits) continue;
+        if (seen.has(digits)) continue;
+        seen.add(digits);
+        unique.push(c);
+      }
+      target = unique;
+    }
+
     // send cap (safe)
     const MAX_SEND = 60;
     const list = target.slice(0, MAX_SEND);
