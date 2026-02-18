@@ -216,7 +216,7 @@ export default async function Page() {
 
   // Insights bullets (simple + direct)
   const dowCounts = new Array(7).fill(0);
-  const mapDowPt = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
+  const mapDowPt = ["Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
   for (const r of month) {
     const st = new Date(String(r.start_time));
     if (String(r.status_v2 ?? r.status) === "CANCELLED") continue;
