@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 
 /**
  * Body:
- * { title: string; message: string; audience: "inactive_30" | "all_recent" }
+ * { message: string; audience: "inactive_30" | "all_recent" }
+ *
+ * Returns OK. Wire to WhatsApp sender later.
  */
 export async function POST(req: Request) {
   try {
