@@ -434,14 +434,23 @@ export default function AgendaPage() {
                         .map((r) => {
                           const top = topFor(r.start_time);
                           const h = heightFor(r);
-                          const name = r.customer_name_snapshot || r.customers?.name || "Cliente";
-                          const svc = String(r.service_name_snapshot || "Serviço")
-                          .replace(/\s*\n\s*/g, " + ")
-                          .replace(/\s{2,}/g, " ")
-                          .trim();
+                                                    const name = r.customer_name_snapshot || r.customers?.name || "Cliente";
+                          const startD = new Date(r.start_time);
+                          const dur = Number(r.service_duration_minutes_snapshot ?? 0);
+                          const end = r.end_time ? new Date(r.end_time) : dur > 0 ? new Date(startD.getTime() + dur * 60000) : null;
+
+                          // Serviço em uma linha (nome / serviço / horário)
+                          const svcRaw = String(r.service_name_snapshot || "Serviço");
+                          const svc = svcRaw
+                            .replace(/\r/g, "")
+                            .replace(/\s*\n\s*/g, " ")
+                            .replace(/\s*\+\s*/g, " + ")
+                            .replace(/\s{2,}/g, " ")
+                            .trim();
+
                           const st = pill(r.status_v2 || r.status);
-                          const end = r.end_time ? new Date(r.end_time) : null;
-                          const time = `${fmtHM(new Date(r.start_time))}${end ? ` – ${fmtHM(end)}` : ""}`;
+                          const time = `${fmtHM(startD)}${end ? ` – ${fmtHM(end)}` : ""}`;
+
                           return (
                             <button
                               key={r.id}
@@ -450,17 +459,19 @@ export default function AgendaPage() {
                               style={{ position: "absolute", top, left: 10, right: 10, height: h, borderRadius: 14, padding: "10px 12px", textAlign: "left", border: "1px solid rgba(212,175,55,0.20)", background: "rgba(212,175,55,0.07)", boxShadow: "0 12px 30px rgba(0,0,0,0.25)" }}
                               title="Clique para ver detalhes"
                             >
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-                                <div>
-                                  <div style={{ fontWeight: 980, letterSpacing: -0.2 }}>{name}</div>
-                                  <div className="ab-muted" style={{ fontSize: 12, marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{svc}</div>
-                                </div>
-                                <div style={{ padding: "4px 8px", borderRadius: 999, border: `1px solid ${st.bd}`, background: st.bg, color: st.fg, fontWeight: 950, fontSize: 11, whiteSpace: "nowrap" }}>
-                                  {st.label}
-                                </div>
+                              {/* status discreto no canto */}
+                              <div
+                                style={{ position: "absolute", top: 10, right: 12, padding: "4px 8px", borderRadius: 999, border: `1px solid ${st.bd}`, background: st.bg, color: st.fg, fontWeight: 950, fontSize: 11, whiteSpace: "nowrap" }}
+                              >
+                                {st.label}
                               </div>
-                              <div className="ab-muted" style={{ fontSize: 12, marginTop: 8, fontWeight: 950, whiteSpace: "nowrap" }}>{time}</div>
+
+                              {/* Nome / Serviço / Horário (um embaixo do outro) */}
+                              <div style={{ fontWeight: 980, letterSpacing: -0.2, paddingRight: 96, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</div>
+                              <div className="ab-muted" style={{ fontSize: 12, marginTop: 4, paddingRight: 96, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{svc}</div>
+                              <div className="ab-muted" style={{ fontSize: 12, marginTop: 8, fontWeight: 950, paddingRight: 96, whiteSpace: "nowrap" }}>{time}</div>
                             </button>
+                          );
                           );
                         })}
 
