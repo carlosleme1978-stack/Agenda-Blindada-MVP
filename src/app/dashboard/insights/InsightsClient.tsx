@@ -1,19 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 
-type ApptRow = {
-  start_time: string;
-  status?: string | null;
-  status_v2?: string | null;
-  customer_name_snapshot?: string | null;
-  service_price_cents_snapshot?: number | null;
-  service_duration_minutes_snapshot?: number | null;
-  customers?: { name?: string | null; phone?: string | null } | null;
-};
-
-type InsightCardData = {
+type CardData = {
+  icon: "calendar" | "clock" | "users" | "alert";
   title: string;
   subtitle: string;
   lines?: string[];
@@ -25,35 +16,42 @@ type PromoDraft = {
   message: string;
 };
 
-function fmtEURFromCents(cents: number) {
-  const v = Number(cents || 0) / 100;
-  try {
-    return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(v);
-  } catch {
-    return `€ ${v.toFixed(2)}`;
-  }
+function ymdLisbon(d: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Lisbon",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
 function dayNamePt(dow: number) {
   return ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"][dow] ?? "Dia";
 }
 
-function normStatus(a: ApptRow) {
-  const s = String(a.status_v2 ?? a.status ?? "").toUpperCase();
-  if (s.includes("NO_SHOW")) return "NO_SHOW";
-  if (s.includes("CANCEL")) return "CANCELLED";
-  if (s.includes("CONFIRM") || s.includes("BOOK")) return "CONFIRMED";
-  return s || "UNKNOWN";
+function fmtEURFromCents(cents: number) {
+  const eur = (Number(cents || 0) / 100) || 0;
+  try {
+    return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(eur);
+  } catch {
+    return `€ ${eur.toFixed(2)}`;
+  }
 }
 
-function Icon({ kind }: { kind: "calendar" | "clock" | "users" | "alert" }) {
-  // Fixed-size inline SVG (won't blow up due to global styles)
-  const size = 22;
-  const common = { width: size, height: size, display: "block" as const };
-  const stroke = "currentColor";
-  const sw = 1.6;
+function pctLess(weak: number, avg: number) {
+  if (!avg || avg <= 0) return null;
+  if (weak >= avg) return 0;
+  const p = Math.round((1 - weak / avg) * 100);
+  return p;
+}
 
-  if (kind === "calendar") {
+function Icon({ name, color }: { name: CardData["icon"]; color: string }) {
+  const common = { width: 22, height: 22, display: "block" as const };
+  const sw = 1.6;
+  const stroke = color;
+  if (name === "calendar") {
     return (
       <svg style={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path d="M7 3v3M17 3v3" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
@@ -66,8 +64,7 @@ function Icon({ kind }: { kind: "calendar" | "clock" | "users" | "alert" }) {
       </svg>
     );
   }
-
-  if (kind === "clock") {
+  if (name === "clock") {
     return (
       <svg style={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z" stroke={stroke} strokeWidth={sw} />
@@ -75,8 +72,7 @@ function Icon({ kind }: { kind: "calendar" | "clock" | "users" | "alert" }) {
       </svg>
     );
   }
-
-  if (kind === "users") {
+  if (name === "users") {
     return (
       <svg style={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path d="M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0Z" stroke={stroke} strokeWidth={sw} />
@@ -84,7 +80,6 @@ function Icon({ kind }: { kind: "calendar" | "clock" | "users" | "alert" }) {
       </svg>
     );
   }
-
   return (
     <svg style={common} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M12 9v4" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
@@ -99,16 +94,27 @@ function Icon({ kind }: { kind: "calendar" | "clock" | "users" | "alert" }) {
 }
 
 export default function InsightsClient() {
-  const supabase = supabaseBrowser;
+  const sb = supabaseBrowser;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [cards, setCards] = useState<Record<string, InsightCardData>>({});
+  const [cards, setCards] = useState<CardData[]>([]);
 
   const [promoOpen, setPromoOpen] = useState(false);
   const [promo, setPromo] = useState<PromoDraft>({ audience: "inactive_30", message: "" });
   const [sendState, setSendState] = useState<"idle" | "sending" | "sent" | "failed">("idle");
   const [sendMsg, setSendMsg] = useState("");
+
+  const palette = useMemo(() => {
+    const gold = "rgba(234,179,8,0.80)";
+    return {
+      gold,
+      border: "rgba(255,255,255,0.10)",
+      cardBg: "rgba(255,255,255,0.06)",
+      cardBg2: "rgba(255,255,255,0.04)",
+      textDim: "rgba(255,255,255,0.60)",
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -118,51 +124,52 @@ export default function InsightsClient() {
       setError(null);
 
       try {
-        const { data: sess } = await supabase.auth.getSession();
-        const uid = sess.session?.user?.id;
+        const { data: sessionData } = await sb.auth.getSession();
+        const uid = sessionData?.session?.user?.id;
         if (!uid) {
           window.location.href = "/login";
           return;
         }
         const ownerId = uid;
 
-        const since = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
+        // appointments last 28d
+        const since = new Date();
+        since.setDate(since.getDate() - 28);
 
-        const { data: apptsRaw, error: apptErr } = await supabase
+        const { data: appts, error: apptErr } = await sb
           .from("appointments")
-          .select(
-            "start_time,status,status_v2,customer_name_snapshot,service_price_cents_snapshot,service_duration_minutes_snapshot,customers(name,phone)"
-          )
+          .select("start_time,status,status_v2,service_price_cents_snapshot,service_duration_minutes_snapshot,customer_id,customer_name_snapshot,customer_phone_snapshot")
           .eq("owner_id", ownerId)
           .gte("start_time", since.toISOString())
-          .order("start_time", { ascending: true })
-          .limit(4000);
+          .limit(5000);
 
         if (apptErr) throw apptErr;
 
-        const list = (apptsRaw ?? []) as unknown as ApptRow[];
+        const list: any[] = appts ?? [];
 
         const byDow = new Array(7).fill(0);
         const byHour = new Map<number, number>();
 
-        let noShowLossCents = 0;
+        let noShowCents = 0;
         let noShowMinutes = 0;
 
         for (const a of list) {
           const st = new Date(a.start_time);
-          const dow = st.getDay();
-          const hr = st.getHours();
+          byDow[st.getDay()] += 1;
+          byHour.set(st.getHours(), (byHour.get(st.getHours()) ?? 0) + 1);
 
-          byDow[dow] += 1;
-          byHour.set(hr, (byHour.get(hr) ?? 0) + 1);
-
-          if (normStatus(a) === "NO_SHOW") {
-            noShowLossCents += Number(a.service_price_cents_snapshot ?? 0);
+          const sv2 = String(a.status_v2 ?? "").toUpperCase();
+          const s = String(a.status ?? "").toUpperCase();
+          const isNoShow = sv2 === "NO_SHOW" || s === "NO_SHOW";
+          if (isNoShow) {
+            noShowCents += Number(a.service_price_cents_snapshot ?? 0);
             noShowMinutes += Number(a.service_duration_minutes_snapshot ?? 0);
           }
         }
 
         const avg = byDow.reduce((s, v) => s + v, 0) / 7;
+
+        // weak day
         let weakDow = 0;
         let weakCount = Infinity;
         for (let i = 0; i < 7; i++) {
@@ -171,78 +178,97 @@ export default function InsightsClient() {
             weakDow = i;
           }
         }
-        const weakPct = avg > 0 ? Math.round(((weakCount - avg) / avg) * 100) : 0;
+        const weakDayName = dayNamePt(weakDow);
+        const weakDayPct = pctLess(weakCount === Infinity ? 0 : weakCount, avg);
 
-        const hours = Array.from(byHour.entries());
-        const after = hours.filter(([h]) => h >= 17).map(([, c]) => c);
-        const before = hours.filter(([h]) => h < 17).map(([, c]) => c);
+        // weak after 16h30 proxy: compare >=17 vs <17
+        const entries = Array.from(byHour.entries());
+        const after = entries.filter(([h]) => h >= 17).map(([, c]) => c);
+        const before = entries.filter(([h]) => h < 17).map(([, c]) => c);
         const afterAvg = after.length ? after.reduce((s, v) => s + v, 0) / after.length : 0;
         const beforeAvg = before.length ? before.reduce((s, v) => s + v, 0) / before.length : 0;
-        const weakAfterPct = beforeAvg > 0 ? Math.round(((afterAvg - beforeAvg) / beforeAvg) * 100) : 0;
+        const weakAfterPct = pctLess(afterAvg, beforeAvg);
 
-        // Inactive clients: last 90d, inactive >30d (use customers relation + snapshot)
-        const since90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-        const { data: ap90, error: ap90Err } = await supabase
-          .from("appointments")
-          .select("start_time,customer_name_snapshot,customers(name,phone)")
+        // inactive clients: use customers + appointments last 180d (same logic of CRM)
+        const { data: custRows, error: custErr } = await sb
+          .from("customers")
+          .select("id,name,phone,created_at")
           .eq("owner_id", ownerId)
-          .gte("start_time", since90.toISOString())
-          .order("start_time", { ascending: false })
-          .limit(8000);
+          .order("created_at", { ascending: false })
+          .limit(1200);
 
-        if (ap90Err) throw ap90Err;
+        if (custErr) throw custErr;
 
-        const byClient = new Map<string, { name: string; last: number }>();
+        const start180 = new Date();
+        start180.setDate(start180.getDate() - 180);
 
-        for (const r of (ap90 ?? []) as any[]) {
-          const name =
-            String(r?.customers?.name ?? r?.customer_name_snapshot ?? "Cliente").trim() || "Cliente";
-          const phone = String(r?.customers?.phone ?? "").trim();
-          const key = `${phone || "no_phone"}__${name}`;
-          const t = new Date(r.start_time).getTime();
-          const prev = byClient.get(key);
-          if (!prev || t > prev.last) byClient.set(key, { name, last: t });
+        const { data: ap180, error: ap180Err } = await sb
+          .from("appointments")
+          .select("customer_id,start_time")
+          .eq("owner_id", ownerId)
+          .gte("start_time", start180.toISOString())
+          .limit(9000);
+
+        if (ap180Err) throw ap180Err;
+
+        const lastByCustomer: Record<string, number> = {};
+        for (const a of ap180 ?? []) {
+          const cid = String((a as any).customer_id ?? "");
+          if (!cid) continue;
+          const t = new Date((a as any).start_time).getTime();
+          if (!lastByCustomer[cid] || t > lastByCustomer[cid]) lastByCustomer[cid] = t;
         }
 
-        const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-        const inactive = Array.from(byClient.values())
-          .filter((c) => c.last < cutoff)
-          .sort((a, b) => a.last - b.last)
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - 30);
+        const cutoffMs = cutoff.getTime();
+
+        const inactive = (custRows ?? [])
+          .filter((c: any) => {
+            const cid = String(c.id);
+            const last = lastByCustomer[cid] ?? 0;
+            return last > 0 && last < cutoffMs;
+          })
+          .sort((a: any, b: any) => (lastByCustomer[String(a.id)] ?? 0) - (lastByCustomer[String(b.id)] ?? 0))
           .slice(0, 5)
-          .map((c) => c.name);
+          .map((c: any) => String(c.name ?? "Cliente"));
 
-        const noShowHours = Math.round(noShowMinutes / 60);
+        const noShowHours = Math.round((noShowMinutes || 0) / 60);
 
-        const weakDayName = dayNamePt(weakDow);
+        const c1: CardData = {
+          icon: "calendar",
+          title: `${weakDayName} é seu dia mais fraco`,
+          subtitle: weakDayPct === null ? "Sem dados suficientes" : `-${weakDayPct}% menos que a média semanal`,
+          cta: { label: "Criar promoção", kind: "promo" },
+        };
+
+        const c2: CardData = {
+          icon: "clock",
+          title: "Horário depois das 16h30 está deficitário",
+          subtitle: weakAfterPct === null ? "Baseado nas últimas 4 semanas" : `-${weakAfterPct}% menos ocupado`,
+        };
+
+        const c3: CardData = {
+          icon: "users",
+          title: `${inactive.length} Clientes inativos`,
+          subtitle: "não retornam há mais de 30 dias",
+          lines: inactive,
+          cta: { label: "Ver Clientes Inativos", kind: "inactive" },
+        };
+
+        const c4: CardData = {
+          icon: "alert",
+          title: `${noShowHours || 0} horas perdidas este mês`,
+          subtitle: `${fmtEURFromCents(noShowCents || 0)} em no-shows`,
+        };
+
         const msg =
           `Olá! 😊\n` +
           `Esta semana estamos com um horário especial na ${weakDayName}.\n` +
           `Quer aproveitar uma condição promocional? Responda aqui e eu já encaixo você no melhor horário.`;
 
-        const built: Record<string, InsightCardData> = {
-          a: {
-            title: `${weakDayName} é seu dia mais fraco`,
-            subtitle: avg > 0 ? `${weakPct}% menos que a média semanal` : "Sem dados suficientes",
-            cta: { label: "Criar promoção", kind: "promo" },
-          },
-          b: {
-            title: "Horário depois das 16h30 está deficitário",
-            subtitle: beforeAvg > 0 ? `${weakAfterPct}% menos ocupado` : "Baseado nas últimas 4 semanas",
-          },
-          c: {
-            title: `${inactive.length} Clientes inativos`,
-            subtitle: "não retornam há mais de 30 dias",
-            lines: inactive,
-            cta: { label: "Ver Clientes Inativos", kind: "inactive" },
-          },
-          d: {
-            title: `${noShowHours || 0} horas perdidas este mês`,
-            subtitle: `${fmtEURFromCents(noShowLossCents || 0)} em no-shows`,
-          },
-        };
-
         if (!alive) return;
-        setCards(built);
+        setCards([c1, c2, c3, c4]);
         setPromo((p) => ({ ...p, message: msg }));
       } catch (e: any) {
         if (!alive) return;
@@ -257,11 +283,12 @@ export default function InsightsClient() {
     return () => {
       alive = false;
     };
-  }, [supabase]);
+  }, [sb]);
 
-  function openPromo() {
+  function openPromo(kind: "promo" | "inactive") {
     setSendState("idle");
     setSendMsg("");
+    setPromo((p) => ({ ...p, audience: kind === "inactive" ? "inactive_30" : p.audience }));
     setPromoOpen(true);
   }
 
@@ -284,88 +311,147 @@ export default function InsightsClient() {
     }
   }
 
+  const cardStyle = {
+    padding: 26,
+    borderRadius: 20,
+    background: palette.cardBg,
+    border: `1px solid ${palette.border}`,
+  } as const;
+
+  const iconWrap = {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    border: `1px solid rgba(234,179,8,0.25)`,
+    background: "rgba(234,179,8,0.06)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flex: "0 0 auto",
+  } as const;
+
+  const btnStyle = {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    padding: "10px 14px",
+    borderRadius: 10,
+    border: "1px solid rgba(234,179,8,0.35)",
+    background: "rgba(234,179,8,0.07)",
+    color: "rgba(234,179,8,0.95)",
+    fontWeight: 900,
+    fontSize: 13,
+    cursor: "pointer",
+    textDecoration: "none",
+  } as const;
+
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 py-8">
-      <div className="mb-8">
-        <div className="text-sm text-white/70">Dashboard</div>
-        <h1 className="text-5xl font-semibold tracking-tight text-white">Insights</h1>
+    <div style={{ maxWidth: 1080, margin: "0 auto", padding: "26px 22px" }}>
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ opacity: 0.75, fontSize: 14, marginBottom: 10 }}>Dashboard</div>
+        <div style={{ fontSize: 54, fontWeight: 950, letterSpacing: -0.8 }}>Insights</div>
       </div>
 
       {error ? (
-        <div className="rounded-2xl border border-red-500/30 bg-red-950/30 px-4 py-3 text-red-100">{error}</div>
-      ) : null}
-
-      {!error ? (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-          <Card
-            icon={<Icon kind="calendar" />}
-            title={loading ? "—" : cards.a?.title ?? "—"}
-            subtitle={loading ? " " : cards.a?.subtitle ?? "—"}
-            buttonLabel={cards.a?.cta?.label}
-            onButton={openPromo}
-          />
-          <Card icon={<Icon kind="clock" />} title={loading ? "—" : cards.b?.title ?? "—"} subtitle={loading ? " " : cards.b?.subtitle ?? "—"} />
-          <Card
-            icon={<Icon kind="users" />}
-            title={loading ? "—" : cards.c?.title ?? "—"}
-            subtitle={loading ? " " : cards.c?.subtitle ?? "—"}
-            lines={!loading ? cards.c?.lines ?? [] : []}
-            buttonLabel={cards.c?.cta?.label}
-            onButton={() => {
-              setPromo((p) => ({ ...p, audience: "inactive_30" }));
-              openPromo();
-            }}
-          />
-          <Card icon={<Icon kind="alert" />} title={loading ? "—" : cards.d?.title ?? "—"} subtitle={loading ? " " : cards.d?.subtitle ?? "—"} />
+        <div style={{ padding: 14, borderRadius: 14, border: "1px solid rgba(239,68,68,0.35)", background: "rgba(127,29,29,0.35)", color: "white", marginBottom: 16 }}>
+          {error}
         </div>
       ) : null}
 
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        {(loading ? new Array(4).fill(null) : cards).map((c: any, idx: number) => {
+          const isLoading = loading && !c;
+          return (
+            <div key={idx} style={cardStyle}>
+              <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+                <div style={iconWrap}>
+                  <Icon name={isLoading ? "calendar" : c.icon} color={palette.gold} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 34, fontWeight: 950, lineHeight: 1.08 }}>
+                    {isLoading ? "—" : c.title}
+                  </div>
+                  <div style={{ marginTop: 14, fontSize: 18, color: palette.textDim }}>
+                    {isLoading ? " " : c.subtitle}
+                  </div>
+
+                  {!isLoading && c.lines && c.lines.length ? (
+                    <div style={{ marginTop: 18, display: "grid", gap: 10, fontSize: 18 }}>
+                      {c.lines.map((l: string, i: number) => (
+                        <div key={i} style={{ opacity: 0.92 }}>{l}</div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {!isLoading && c.cta ? (
+                    <div style={{ marginTop: 18 }}>
+                      <button style={btnStyle} onClick={() => openPromo(c.cta.kind)}>
+                        {c.cta.label}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
       {promoOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-[#121417]/95 p-5 shadow-2xl">
-            <div className="mb-4 flex items-start justify-between gap-3">
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.60)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ width: "100%", maxWidth: 620, borderRadius: 18, border: `1px solid ${palette.border}`, background: "rgba(12,16,24,0.92)", padding: 18 }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
               <div>
-                <div className="text-lg font-semibold text-white">Criar promoção</div>
-                <div className="text-sm text-white/60">Preparar mensagem para WhatsApp</div>
+                <div style={{ fontSize: 18, fontWeight: 950 }}>Criar promoção</div>
+                <div style={{ marginTop: 4, fontSize: 13, color: palette.textDim }}>Preparar mensagem para WhatsApp</div>
               </div>
               <button
                 onClick={() => setPromoOpen(false)}
-                className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/80 hover:bg-white/10"
+                style={{ padding: "8px 10px", borderRadius: 10, border: `1px solid ${palette.border}`, background: palette.cardBg2, color: "rgba(255,255,255,0.85)", fontWeight: 900, cursor: "pointer" }}
               >
                 Fechar
               </button>
             </div>
 
-            <div className="grid gap-3">
-              <label className="grid gap-1">
-                <span className="text-xs text-white/60">Audiência</span>
+            <div style={{ display: "grid", gap: 10 }}>
+              <label style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 12, color: palette.textDim }}>Audiência</div>
                 <select
                   value={promo.audience}
                   onChange={(e) => setPromo((p) => ({ ...p, audience: e.target.value as any }))}
-                  className="h-11 rounded-xl border border-white/10 bg-white/5 px-3 text-white outline-none"
+                  style={{ height: 44, borderRadius: 12, border: `1px solid ${palette.border}`, background: palette.cardBg2, color: "white", padding: "0 12px", outline: "none" }}
                 >
                   <option value="inactive_30">Clientes inativos (+30 dias)</option>
                   <option value="all_recent">Todos clientes recentes (90 dias)</option>
                 </select>
               </label>
 
-              <label className="grid gap-1">
-                <span className="text-xs text-white/60">Mensagem</span>
+              <label style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 12, color: palette.textDim }}>Mensagem</div>
                 <textarea
                   value={promo.message}
                   onChange={(e) => setPromo((p) => ({ ...p, message: e.target.value }))}
-                  rows={6}
-                  className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-white outline-none"
-                  placeholder="Escreva a mensagem..."
+                  rows={7}
+                  style={{ borderRadius: 12, border: `1px solid ${palette.border}`, background: palette.cardBg2, color: "white", padding: 12, outline: "none", fontSize: 14, lineHeight: 1.4 }}
                 />
               </label>
 
-              <div className="flex items-center justify-between gap-3 pt-1">
-                <div className="text-xs text-white/60">Dica: mensagem curta com CTA (“responda SIM”).</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 4 }}>
+                <div style={{ fontSize: 12, color: palette.textDim }}>Dica: CTA simples (“Responda SIM”).</div>
                 <button
                   onClick={sendPromo}
                   disabled={sendState === "sending"}
-                  className="rounded-xl border border-white/10 bg-[linear-gradient(90deg,var(--ab-gold),#5eead4)] px-4 py-2 text-sm font-semibold text-black hover:opacity-95 disabled:opacity-60"
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 12,
+                    border: "1px solid rgba(234,179,8,0.35)",
+                    background: "linear-gradient(90deg, rgba(234,179,8,0.95), rgba(94,234,212,0.85))",
+                    color: "rgba(0,0,0,0.90)",
+                    fontWeight: 950,
+                    cursor: sendState === "sending" ? "default" : "pointer",
+                    opacity: sendState === "sending" ? 0.6 : 1,
+                  }}
                 >
                   {sendState === "sending" ? "Enviando..." : "Enviar"}
                 </button>
@@ -373,60 +459,22 @@ export default function InsightsClient() {
 
               {sendState !== "idle" ? (
                 <div
-                  className={[
-                    "mt-2 rounded-xl px-3 py-2 text-sm",
-                    sendState === "sent"
-                      ? "border border-emerald-500/30 bg-emerald-950/30 text-emerald-100"
-                      : "border border-red-500/30 bg-red-950/30 text-red-100",
-                  ].join(" ")}
+                  style={{
+                    marginTop: 10,
+                    borderRadius: 12,
+                    padding: "10px 12px",
+                    border: sendState === "sent" ? "1px solid rgba(16,185,129,0.35)" : "1px solid rgba(239,68,68,0.35)",
+                    background: sendState === "sent" ? "rgba(6,78,59,0.35)" : "rgba(127,29,29,0.35)",
+                    color: "white",
+                    fontSize: 13,
+                    fontWeight: 800,
+                  }}
                 >
                   {sendMsg || (sendState === "sent" ? "Enviado." : "Falha ao enviar.")}
                 </div>
               ) : null}
             </div>
           </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function Card(props: {
-  icon: React.ReactNode;
-  title: string;
-  subtitle: string;
-  lines?: string[];
-  buttonLabel?: string;
-  onButton?: () => void;
-}) {
-  const { icon, title, subtitle, lines, buttonLabel, onButton } = props;
-
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-8 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
-      <div className="mb-2 flex items-start gap-4">
-        <div className="mt-1 text-[var(--ab-gold)]">{icon}</div>
-        <div className="min-w-0">
-          <div className="text-3xl font-semibold leading-tight text-white">{title}</div>
-          <div className="mt-3 text-lg text-white/60">{subtitle}</div>
-        </div>
-      </div>
-
-      {lines && lines.length ? (
-        <div className="mt-5 space-y-3 text-base text-white/85">
-          {lines.map((l, idx) => (
-            <div key={idx}>{l}</div>
-          ))}
-        </div>
-      ) : null}
-
-      {buttonLabel && onButton ? (
-        <div className="mt-6">
-          <button
-            onClick={onButton}
-            className="rounded-xl border border-[var(--ab-gold)]/40 bg-[rgba(255,255,255,0.03)] px-5 py-2.5 text-sm font-semibold text-[var(--ab-gold)] hover:bg-[rgba(255,255,255,0.06)]"
-          >
-            {buttonLabel}
-          </button>
         </div>
       ) : null}
     </div>

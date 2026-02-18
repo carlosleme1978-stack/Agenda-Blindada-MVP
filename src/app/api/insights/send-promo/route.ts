@@ -10,23 +10,16 @@ export async function POST(req: Request) {
     const message = String(body?.message ?? "").trim();
     const audience = String(body?.audience ?? "inactive_30");
 
-    if (!message) {
-      return NextResponse.json({ error: "Mensagem vazia." }, { status: 400 });
-    }
+    if (!message) return NextResponse.json({ error: "Mensagem vazia." }, { status: 400 });
 
-    // Optional: wire to WhatsApp sender if exists.
+    // Wire to WhatsApp sender later (endpoint ready).
     let sent = 0;
-    try {
-      const mod: any = await import("@/lib/whatsapp/send").catch(() => null);
-      if (mod?.sendPromoToAudience) {
-        sent = await mod.sendPromoToAudience({ message, audience });
-      }
-    } catch {}
 
     return NextResponse.json({
       ok: true,
       sent,
       message: sent ? `Promoção enviada para ${sent} contatos.` : "Promoção preparada (envio ainda não configurado).",
+      audience,
     });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Erro inesperado." }, { status: 500 });
