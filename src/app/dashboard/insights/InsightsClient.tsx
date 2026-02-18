@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 
 export default function InsightsClient() {
-  const supabase = useMemo(() => supabaseBrowser(), []);
+  // In this codebase, supabaseBrowser is already a client instance (not a function).
+  const supabase = supabaseBrowser;
+
   const [loading, setLoading] = useState(true);
   const [weakDay, setWeakDay] = useState("—");
   const [weakPercent, setWeakPercent] = useState("—");
@@ -12,15 +14,21 @@ export default function InsightsClient() {
   const [noShowValue, setNoShowValue] = useState(0);
 
   useEffect(() => {
+    let alive = true;
+
     async function load() {
       setLoading(true);
 
       const since = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
 
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("appointments")
         .select("start_time,status_v2,total_price_snapshot,service_duration_minutes_snapshot")
         .gte("start_time", since.toISOString());
+
+      if (error) {
+        console.error(error);
+      }
 
       const list = data ?? [];
 
@@ -61,8 +69,9 @@ export default function InsightsClient() {
         "Sábado",
       ];
 
+      if (!alive) return;
       setWeakDay(names[minIndex]);
-      setWeakPercent(percent + "% menos que a média semanal");
+      setWeakPercent(`${percent}% menos que a média semanal`);
       setNoShowHours(Math.round(noShowMinutes / 60));
       setNoShowValue(noShowLoss);
 
@@ -70,6 +79,9 @@ export default function InsightsClient() {
     }
 
     load();
+    return () => {
+      alive = false;
+    };
   }, [supabase]);
 
   return (
@@ -85,9 +97,7 @@ export default function InsightsClient() {
           <div className="text-3xl font-semibold text-white">
             {loading ? "Carregando..." : `${weakDay} é seu dia mais fraco`}
           </div>
-          <div className="mt-2 text-lg text-white/60">
-            {loading ? "" : weakPercent}
-          </div>
+          <div className="mt-2 text-lg text-white/60">{loading ? "" : weakPercent}</div>
 
           <button className="mt-5 rounded-xl border border-yellow-500/40 px-4 py-2 text-sm font-semibold text-yellow-400 hover:bg-white/5">
             Criar promoção
@@ -96,22 +106,14 @@ export default function InsightsClient() {
 
         {/* HORÁRIO FRACO */}
         <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
-          <div className="text-3xl font-semibold text-white">
-            Horário depois das 16h30 está deficitário
-          </div>
-          <div className="mt-2 text-lg text-white/60">
-            Baseado nas últimas 4 semanas
-          </div>
+          <div className="text-3xl font-semibold text-white">Horário depois das 16h30 está deficitário</div>
+          <div className="mt-2 text-lg text-white/60">Baseado nas últimas 4 semanas</div>
         </div>
 
         {/* CLIENTES INATIVOS */}
         <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
-          <div className="text-3xl font-semibold text-white">
-            Clientes inativos
-          </div>
-          <div className="mt-2 text-lg text-white/60">
-            não retornam há mais de 30 dias
-          </div>
+          <div className="text-3xl font-semibold text-white">Clientes inativos</div>
+          <div className="mt-2 text-lg text-white/60">não retornam há mais de 30 dias</div>
 
           <button className="mt-5 rounded-xl border border-yellow-500/40 px-4 py-2 text-sm font-semibold text-yellow-400 hover:bg-white/5">
             Ver Clientes Inativos
@@ -120,12 +122,8 @@ export default function InsightsClient() {
 
         {/* NO SHOW */}
         <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
-          <div className="text-3xl font-semibold text-white">
-            {noShowHours} horas perdidas este mês
-          </div>
-          <div className="mt-2 text-lg text-white/60">
-            € {noShowValue.toFixed(2)} em no-shows
-          </div>
+          <div className="text-3xl font-semibold text-white">{noShowHours} horas perdidas este mês</div>
+          <div className="mt-2 text-lg text-white/60">€ {noShowValue.toFixed(2)} em no-shows</div>
         </div>
       </div>
     </div>
