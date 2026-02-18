@@ -470,6 +470,7 @@ export default function AgendaPage() {
                               </div>
 
                               {/* stacked content (Nome -> Serviço -> Horário) */}
+                              <div style={{ paddingRight: 10 }}>
                                 <div style={{ fontWeight: 980, letterSpacing: -0.2, lineHeight: 1.1 }}>{name}</div>
                                 <div
                                   className="ab-muted"
