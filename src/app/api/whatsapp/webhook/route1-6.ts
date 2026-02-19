@@ -402,35 +402,7 @@ export async function POST(req: NextRequest) {
 
   const db = supabaseAdmin();
 
-  // ✅ FIX 1: Idempotência inbound FORTE (anti-retry da Meta)
-  // Tenta inserir inbound com wa_message_id; se já existe (unique), retorna e NÃO envia nada.
-  if (waMessageId) {
-    const ins = await db.from("message_log").insert({
-      company_id: resolvedCompanyId,
-      direction: "inbound",
-      customer_phone: fromDigits,
-      body: textRaw,
-      wa_message_id: waMessageId, // ✅ coluna dedicada (crie no banco)
-      meta: { raw: body, wa: { phone_number_id: toPhoneNumberId ?? null, display_phone_number: toDisplayPhone ?? null } },
-    });
-
-    if (ins.error) {
-      if (isUniqueViolation(ins.error)) {
-        return NextResponse.json({ ok: true });
-      }
-      console.error("message_log inbound insert error:", ins.error);
-      return NextResponse.json({ ok: true });
-    }
-  } else {
-    // fallback (sem id)
-    await db.from("message_log").insert({
-      company_id: resolvedCompanyId,
-      direction: "inbound",
-      customer_phone: fromDigits,
-      body: textRaw,
-      meta: { raw: message },
-    });
-  }
+  
 
   // ─────────────────────────────────────────────
   // Encontrar customer e company
@@ -510,13 +482,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-
-  const companyId = resolvedCompanyId;
   // ✅ DEDUPE (anti-replay): se a Meta reenviar o mesmo wa_message_id, ignoramos
   if (waMessageId) {
     try {
       const { error } = await db.from("webhook_dedup").insert({
-        company_id: resolvedCompanyId,
+        company_id: companyId,
         source: "meta",
         message_id: waMessageId,
       });
@@ -529,7 +499,7 @@ export async function POST(req: NextRequest) {
   // ✅ Audit OK
   try {
     await db.from("webhook_audit").insert({
-      company_id: resolvedCompanyId,
+      company_id: companyId,
       source: "meta",
       event_type: "message",
       ip,
@@ -562,7 +532,7 @@ export async function POST(req: NextRequest) {
     const created = await db
       .from("customers")
       .insert({
-        company_id: resolvedCompanyId,
+        company_id: companyId,
         phone: fromDigits,
         name: null,
         consent_whatsapp: true,
@@ -573,7 +543,41 @@ export async function POST(req: NextRequest) {
     customer = created.data;
   }
 
-  // ✅ SOLO: garantir owner_id nas marcações criadas via WhatsApp
+  const companyId = resolvedCompanyId;
+
+  
+
+  // ✅ FIX 1: Idempotência inbound FORTE (anti-retry da Meta)
+  // Tenta inserir inbound com wa_message_id; se já existe (unique), retorna e NÃO envia nada.
+  if (waMessageId) {
+    const ins = await db.from("message_log").insert({
+      company_id: companyId,
+      direction: "inbound",
+      customer_phone: fromDigits,
+      body: textRaw,
+      wa_message_id: waMessageId, // ✅ coluna dedicada (crie no banco)
+      meta: { raw: body, wa: { phone_number_id: toPhoneNumberId ?? null, display_phone_number: toDisplayPhone ?? null } },
+    });
+
+    if (ins.error) {
+      if (isUniqueViolation(ins.error)) {
+        return NextResponse.json({ ok: true });
+      }
+      console.error("message_log inbound insert error:", ins.error);
+      return NextResponse.json({ ok: true });
+    }
+  } else {
+    // fallback (sem id)
+    await db.from("message_log").insert({
+      company_id: companyId,
+      direction: "inbound",
+      customer_phone: fromDigits,
+      body: textRaw,
+      meta: { raw: message },
+    });
+  }
+
+// ✅ SOLO: garantir owner_id nas marcações criadas via WhatsApp
   // (a UI/availability/agenda usam owner_id para filtrar e bloquear horários)
   const { data: ownerProfile } = await db
     .from("profiles")
@@ -661,7 +665,7 @@ export async function POST(req: NextRequest) {
     if (upd.data && upd.data.length > 0) return;
 
     const ins = await db.from("chat_sessions").insert({
-      company_id: resolvedCompanyId,
+      company_id: companyId,
       company_id: companyId,
       customer_id: customer.id,
       state: nextState,
@@ -684,7 +688,7 @@ export async function POST(req: NextRequest) {
     }
 
     const ins = await db.from("message_log").insert({
-      company_id: resolvedCompanyId,
+      company_id: companyId,
       company_id: companyId,
       direction: "outbound",
       customer_phone: fromDigits,
