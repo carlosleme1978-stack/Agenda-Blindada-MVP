@@ -341,6 +341,15 @@ export async function POST(req: NextRequest) {
 
   const fromDigits = onlyDigits(senderWa);
 
+  // ✅ Metadados do número da empresa (destino) — essencial para resolver a company correta
+  const toPhoneNumberId: string | undefined = value?.metadata?.phone_number_id;
+  const toDisplayPhone: string | undefined = value?.metadata?.display_phone_number;
+  const textRaw = normalizeInboundText(message.text.body);
+  const text = stripDiacritics(textRaw);
+  const waMessageId: string | undefined = message.id;
+
+  const db = supabaseAdmin();
+
   // ✅ Audit (sempre) — grava evento bruto antes de resolver company (sem company_id)
   try {
     await db.from("webhook_audit").insert({
@@ -354,16 +363,6 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     console.error("webhook_audit(received) insert failed:", e);
   }
-
-
-  // ✅ Metadados do número da empresa (destino) — essencial para resolver a company correta
-  const toPhoneNumberId: string | undefined = value?.metadata?.phone_number_id;
-  const toDisplayPhone: string | undefined = value?.metadata?.display_phone_number;
-  const textRaw = normalizeInboundText(message.text.body);
-  const text = stripDiacritics(textRaw);
-  const waMessageId: string | undefined = message.id;
-
-  const db = supabaseAdmin();
 
   
 
