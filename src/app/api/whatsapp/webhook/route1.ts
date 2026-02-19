@@ -417,7 +417,10 @@ export async function POST(req: NextRequest) {
   const resolvedCompanyId = await resolveCompanyId();
   if (!resolvedCompanyId) return NextResponse.json({ ok: true });
 
-  let customer: any = null;
+  
+
+  const companyId = resolvedCompanyId;
+let customer: any = null;
 
   // ✅ Procura o customer dentro da company resolvida (NÃO procurar global, para não "pegar" a company errada)
   {
@@ -448,13 +451,7 @@ export async function POST(req: NextRequest) {
 
     customer = created.data;
   }
-
-  const companyId = resolvedCompanyId;
-
-  
-
-  
-  if (!companyId) return NextResponse.json({ ok: true });
+if (!companyId) return NextResponse.json({ ok: true });
 // ✅ FIX 1: Idempotência inbound FORTE (anti-retry da Meta)
   // Tenta inserir inbound com wa_message_id; se já existe (unique), retorna e NÃO envia nada.
   if (waMessageId) {
