@@ -5,6 +5,7 @@ import { SCHEDULE_CONFIG } from "@/config/schedule";
 import { verifyMetaSignature } from "@/lib/whatsapp/verifyMetaSignature";
 import { allowHit } from "@/lib/security/simpleRateLimit";
 
+
 // ✅ IMPORTANTE (BANCO / SUPABASE)
 // Para idempotência 100% (anti-retry da Meta), crie:
 // - coluna: wa_message_id (text) em message_log
@@ -19,7 +20,6 @@ const TZ = "Europe/Lisbon";
 function onlyDigits(v: string) {
   return String(v || "").replace(/\D/g, "");
 }
-
 
 function normalizeInboundText(v: string) {
   return String(v || "")
@@ -324,63 +324,7 @@ export async function GET(req: NextRequest) {
 // Webhook Messages (POST)
 // ─────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  
-  const db = supabaseAdmin();
-  let companyId: string | null = null;
-  const ip =
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-real-ip") ||
-    "unknown";
-  const ua = req.headers.get("user-agent") || "unknown";
-
-  // ✅ Rate limit mínimo (memória). Em escala real: Redis/Upstash.
-  if (!allowHit(`wa:webhook:ip:${ip}`, 300, 60_000)) {
-    try {
-      const db = supabaseAdmin();
-      await db.from("webhook_audit").insert({
-        source: "meta",
-        event_type: "blocked",
-        ip,
-        user_agent: ua,
-        reason: "rate_limit_ip",
-      });
-    } catch {}
-    return NextResponse.json({ ok: true });
-  }
-
-  // ✅ RAW body é obrigatório para validar assinatura da Meta
-  const rawBody = await req.text();
-  const sig = req.headers.get("x-hub-signature-256");
-
-  let signatureOk = false;
-  try {
-    signatureOk = verifyMetaSignature(rawBody, sig);
-  } catch {
-    signatureOk = false;
-  }
-
-  if (!signatureOk) {
-    try {
-      const db = supabaseAdmin();
-      await db.from("webhook_audit").insert({
-        source: "meta",
-        event_type: "blocked",
-        ip,
-        user_agent: ua,
-        reason: "invalid_signature",
-        payload: rawBody ? JSON.parse(rawBody) : null,
-      });
-    } catch {}
-    return NextResponse.json({ ok: true });
-  }
-
-  let body: any;
-  try {
-    body = JSON.parse(rawBody);
-  } catch {
-    return NextResponse.json({ ok: true });
-  }
-
+  const body = await req.json();
   const entry = body.entry?.[0];
   const change = entry?.changes?.[0];
   const value = change?.value;
@@ -397,116 +341,15 @@ export async function POST(req: NextRequest) {
 
   const fromDigits = onlyDigits(senderWa);
 
-  // Metadata and message id are needed by resolvers/audit — declare early
+  // ✅ Metadados do número da empresa (destino) — essencial para resolver a company correta
   const toPhoneNumberId: string | undefined = value?.metadata?.phone_number_id;
   const toDisplayPhone: string | undefined = value?.metadata?.display_phone_number;
   const textRaw = normalizeInboundText(message.text.body);
   const text = stripDiacritics(textRaw);
   const waMessageId: string | undefined = message.id;
 
-  // ✅ Resolver forte de companyId (multi-tenant)
-  async function resolveCompanyIdStrong(): Promise<string | null> {
-  const pid = toPhoneNumberId ? String(toPhoneNumberId) : null;
-  const displayDigits = toDisplayPhone ? onlyDigits(toDisplayPhone) : null;
-
-  // 1) phone_number_id (colunas prováveis)
-  if (pid) {
-    const cols = ["wa_phone_number_id", "whatsapp_phone_number_id"];
-    for (const col of cols) {
-      try {
-        const r = await (db as any)
-          .from("companies")
-          .select("id")
-          .eq(col as any, pid as any)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (!r?.error && r?.data?.id) return r.data.id;
-      } catch {}
-    }
-  }
-
-  // 2) display phone digits (fallback)
-  if (displayDigits) {
-    const cols = ["wa_display_phone_number", "whatsapp_phone", "phone"];
-    for (const col of cols) {
-      try {
-        const r = await (db as any)
-          .from("companies")
-          .select("id")
-          .eq(col as any, displayDigits as any)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (!r?.error && r?.data?.id) return r.data.id;
-      } catch {}
-    }
-  }
-
-  return null;
-}
-
-
-// ✅ Resolve companyId ANTES de qualquer insert no message_log (evita company_id NULL)
-if (!companyId) {
-  companyId = await resolveCompanyIdStrong();
-}
-
-// Audit do routing (para diagnosticar)
-try {
-  await db.from("webhook_audit").insert({
-    company_id: companyId,
-    source: "meta",
-    event_type: companyId ? "routed" : "unrouted",
-    wa_phone: fromDigits,
-    wa_message_id: waMessageId ?? null,
-    payload: body,
-    reason: `to_phone_number_id:${toPhoneNumberId ?? "null"} display:${toDisplayPhone ?? "null"}`,
-  } as any);
-} catch {}
-
-if (!companyId) {
-// ✅ Metadados do número da empresa (destino) — já declarados acima
-  const toPhoneNumberId: string | undefined = value?.metadata?.phone_number_id;
-  const toDisplayPhone: string | undefined = value?.metadata?.display_phone_number;
-  const textRaw = normalizeInboundText(message.text.body);
-  const text = stripDiacritics(textRaw);
-  const waMessageId: string | undefined = message.id;
-
-  // ✅ FIX 1: Idempotência inbound FORTE (anti-retry da Meta)
-  // Tenta inserir inbound com wa_message_id; se já existe (unique), retorna e NÃO envia nada.
-  if (waMessageId) {
-    const ins = await db.from("message_log").insert({
-      company_id: companyId,
-      direction: "inbound",
-      customer_phone: fromDigits,
-      body: textRaw,
-      wa_message_id: waMessageId, // ✅ coluna dedicada (crie no banco)
-      meta: { raw: body, wa: { phone_number_id: toPhoneNumberId ?? null, display_phone_number: toDisplayPhone ?? null } },
-    });
-
-    if (ins.error) {
-      if (isUniqueViolation(ins.error)) {
-        return NextResponse.json({ ok: true });
-      }
-      console.error("message_log inbound insert error:", ins.error);
-      return NextResponse.json({ ok: true });
-    }
-  } else {
-    // fallback (sem id)
-    await db.from("message_log").insert({
-      company_id: companyId,
-      direction: "inbound",
-      customer_phone: fromDigits,
-      body: textRaw,
-      meta: { raw: message },
-    });
-  }
-
-  // ─────────────────────────────────────────────
-  // Encontrar customer e company
-  // ─────────────────────────────────────────────
-  const candidates = [fromDigits, `+${fromDigits}`];
+  const db = supabaseAdmin();
+const candidates = [fromDigits, `+${fromDigits}`];
 
 
   // ─────────────────────────────────────────────
@@ -549,18 +392,6 @@ if (!companyId) {
       }
     }
 
-    // 3) Último fallback: primeira company
-    try {
-      const r = await (db as any)
-        .from("companies")
-        .select("id")
-        .order("created_at", { ascending: true })
-        .limit(1)
-        .maybeSingle();
-
-      if (!r.error && r.data?.id) return r.data.id;
-    } catch (_) {}
-
     return null;
   }
 
@@ -569,46 +400,49 @@ if (!companyId) {
     try {
       await db.from("webhook_audit").insert({
         source: "meta",
-        event_type: "error",
-        ip,
-        user_agent: ua,
+        event_type: "unrouted",
         wa_phone: fromDigits,
         wa_message_id: waMessageId ?? null,
         payload: body,
-        reason: `company_not_found_for_phone_number_id:${toPhoneNumberId ?? "null"}`,
-      });
+        reason: `to_phone_number_id:${toPhoneNumberId ?? "null"} display:${toDisplayPhone ?? "null"}`,
+      } as any);
     } catch {}
     return NextResponse.json({ ok: true });
   }
 
-  // ✅ DEDUPE (anti-replay): se a Meta reenviar o mesmo wa_message_id, ignoramos
+
+  // ✅ FIX 1: Idempotência inbound FORTE (anti-retry da Meta)
+  // Tenta inserir inbound com wa_message_id; se já existe (unique), retorna e NÃO envia nada.
   if (waMessageId) {
-    try {
-      const { error } = await db.from("webhook_dedup").insert({
-        company_id: companyId,
-        source: "meta",
-        message_id: waMessageId,
-      });
-      if (error && String((error as any).message || "").toLowerCase().includes("duplicate")) {
+    const ins = await db.from("message_log").insert({
+      direction: "inbound",
+      customer_phone: fromDigits,
+      body: textRaw,
+      wa_message_id: waMessageId, // ✅ coluna dedicada (crie no banco)
+      meta: { raw: body, wa: { phone_number_id: toPhoneNumberId ?? null, display_phone_number: toDisplayPhone ?? null } },
+    });
+
+    if (ins.error) {
+      if (isUniqueViolation(ins.error)) {
         return NextResponse.json({ ok: true });
       }
-    } catch {}
+      console.error("message_log inbound insert error:", ins.error);
+      return NextResponse.json({ ok: true });
+    }
+  } else {
+    // fallback (sem id)
+    await db.from("message_log").insert({
+      direction: "inbound",
+      customer_phone: fromDigits,
+      body: textRaw,
+      meta: { raw: message },
+    });
   }
 
-  // ✅ Audit OK
-  try {
-    await db.from("webhook_audit").insert({
-      company_id: companyId,
-      source: "meta",
-      event_type: "message",
-      ip,
-      user_agent: ua,
-      wa_phone: fromDigits,
-      wa_message_id: waMessageId ?? null,
-      payload: body,
-    });
-  } catch {}
-
+  // ─────────────────────────────────────────────
+  // Encontrar customer e company
+  // ─────────────────────────────────────────────
+  
 
   let customer: any = null;
 
@@ -631,7 +465,7 @@ if (!companyId) {
     const created = await db
       .from("customers")
       .insert({
-        company_id: companyId,
+        company_id: resolvedCompanyId,
         phone: fromDigits,
         name: null,
         consent_whatsapp: true,
@@ -642,7 +476,7 @@ if (!companyId) {
     customer = created.data;
   }
 
-  companyId = resolvedCompanyId;
+  const companyId = resolvedCompanyId;
 
   // ✅ SOLO: garantir owner_id nas marcações criadas via WhatsApp
   // (a UI/availability/agenda usam owner_id para filtrar e bloquear horários)
@@ -1776,5 +1610,3 @@ if (apptId && pickedIds.length > 1) {
 
   return NextResponse.json({ ok: true });
 }
-}
-
