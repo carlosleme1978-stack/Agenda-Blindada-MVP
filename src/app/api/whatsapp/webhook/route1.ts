@@ -324,7 +324,11 @@ export async function GET(req: NextRequest) {
 // Webhook Messages (POST)
 // ─────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  const body = await req.json();
+  
+  const db = supabaseAdmin();
+
+  let companyId: string | null = null;
+const body = await req.json();
   const entry = body.entry?.[0];
   const change = entry?.changes?.[0];
   const value = change?.value;
@@ -348,8 +352,6 @@ export async function POST(req: NextRequest) {
   const text = stripDiacritics(textRaw);
   const waMessageId: string | undefined = message.id;
 
-  const db = supabaseAdmin();
-
   // ✅ Audit (sempre) — grava evento bruto antes de resolver company (sem company_id)
   try {
     await db.from("webhook_audit").insert({
@@ -364,12 +366,7 @@ export async function POST(req: NextRequest) {
     console.error("webhook_audit(received) insert failed:", e);
   }
 
-  
-
-
-  
-  let companyId: string | null = null;
-// ─────────────────────────────────────────────
+  // ─────────────────────────────────────────────
   // Encontrar customer e company
   // ─────────────────────────────────────────────
   const candidates = [fromDigits, `+${fromDigits}`];
