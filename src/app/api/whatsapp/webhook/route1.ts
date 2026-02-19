@@ -326,9 +326,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   
   const db = supabaseAdmin();
-
   let companyId: string | null = null;
-const body = await req.json();
+  const body = await req.json();
   const entry = body.entry?.[0];
   const change = entry?.changes?.[0];
   const value = change?.value;
@@ -345,31 +344,68 @@ const body = await req.json();
 
   const fromDigits = onlyDigits(senderWa);
 
-  // ✅ Metadados do número da empresa (destino) — essencial para resolver a company correta
-  const toPhoneNumberId: string | undefined = value?.metadata?.phone_number_id;
-  const toDisplayPhone: string | undefined = value?.metadata?.display_phone_number;
-  const textRaw = normalizeInboundText(message.text.body);
-  const text = stripDiacritics(textRaw);
-  const waMessageId: string | undefined = message.id;
+// ✅ Resolver forte de companyId (multi-coluna + logs)
+async function resolveCompanyIdStrong(): Promise<string | null> {
+  const pid = toPhoneNumberId ? String(toPhoneNumberId) : null;
+  const displayDigits = toDisplayPhone ? onlyDigits(toDisplayPhone) : null;
 
-  // ✅ Audit (sempre) — grava evento bruto antes de resolver company (sem company_id)
-  try {
-    await db.from("webhook_audit").insert({
-      source: "meta",
-      event_type: "received",
-      wa_phone: fromDigits,
-      wa_message_id: waMessageId ?? null,
-      payload: body,
-      reason: `to_phone_number_id:${toPhoneNumberId ?? "null"}`,
-    } as any);
-  } catch (e) {
-    console.error("webhook_audit(received) insert failed:", e);
+  // 1) por phone_number_id (colunas conhecidas)
+  if (pid) {
+    const cols = ["wa_phone_number_id", "whatsapp_phone_number_id", "whatsapp_phone_number_id_2", "whatsapp_phone_number_id_legacy"];
+    for (const col of cols) {
+      try {
+        const r = await (db as any)
+          .from("companies")
+          .select("id")
+          .eq(col as any, pid as any)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (r?.error) console.error("resolveCompanyIdStrong by", col, "error:", r.error);
+        if (!r?.error && r?.data?.id) return r.data.id;
+      } catch (e) {
+        // coluna pode não existir: ignorar
+      }
+    }
   }
 
-  // ─────────────────────────────────────────────
-  // Encontrar customer e company
-  // ─────────────────────────────────────────────
-  const candidates = [fromDigits, `+${fromDigits}`];
+  // 2) por display phone (colunas alternativas)
+  if (displayDigits) {
+    const cols = ["wa_display_phone_number", "whatsapp_phone", "phone", "whatsapp_phone_number"];
+    for (const col of cols) {
+      try {
+        const r = await (db as any)
+          .from("companies")
+          .select("id")
+          .eq(col as any, displayDigits as any)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (r?.error) console.error("resolveCompanyIdStrong by", col, "error:", r.error);
+        if (!r?.error && r?.data?.id) return r.data.id;
+      } catch (e) {
+        // coluna pode não existir: ignorar
+      }
+    }
+  }
+
+  // 3) sem fallback para "primeira company" (evita routing errado)
+  return null;
+}
+
+
+
+  // ✅ Metadados do número da empresa (destino) — essencial para resolver a company correta
+const toPhoneNumberId: string | undefined = value?.metadata?.phone_number_id;
+const toDisplayPhone: string | undefined = value?.metadata?.display_phone_number;
+const textRaw = normalizeInboundText(message.text.body);
+const text = stripDiacritics(textRaw);
+const waMessageId: string | undefined = message.id;
+// companyId is declared earlier in this function; reuse that variable instead of redeclaring.
+// ─────────────────────────────────────────────
+// Encontrar customer e company
+// ─────────────────────────────────────────────
+const candidates = [fromDigits, `+${fromDigits}`];
 
 
   // ─────────────────────────────────────────────
@@ -428,28 +464,7 @@ const body = await req.json();
   }
 
   const resolvedCompanyId = await resolveCompanyId();
-  companyId = resolvedCompanyId;
-
-  
-  // ✅ Fail-fast: sem companyId não pode gravar nem responder (evita company_id NULL)
-  if (!companyId) {
-    console.error("companyId NULL — toPhoneNumberId:", toPhoneNumberId, "toDisplayPhone:", toDisplayPhone);
-    try {
-      await db.from("webhook_audit").insert({
-        source: "meta",
-        event_type: "error",
-        wa_phone: fromDigits,
-        wa_message_id: waMessageId ?? null,
-        payload: body,
-        reason: `company_not_found phone_number_id:${toPhoneNumberId ?? "null"}`,
-      } as any);
-    } catch (e) {
-      console.error("webhook_audit(error) insert failed:", e);
-    }
-    return NextResponse.json({ ok: true });
-  }
-
-if (!resolvedCompanyId) return NextResponse.json({ ok: true });
+  if (!resolvedCompanyId) return NextResponse.json({ ok: true });
 let customer: any = null;
 
   // ✅ Procura o customer dentro da company resolvida (NÃO procurar global, para não "pegar" a company errada)
@@ -505,7 +520,32 @@ if (!companyId) return NextResponse.json({ ok: true });
   }
 
 
-    const ins = await db.from("message_log").insert({
+    const ins = 
+
+// ✅ Resolve companyId antes de gravar message_log (evita company_id NULL)
+if (!companyId) {
+  companyId = await resolveCompanyIdStrong();
+}
+
+// Audit do routing (sempre)
+try {
+  await db.from("webhook_audit").insert({
+    company_id: companyId,
+    source: "meta",
+    event_type: companyId ? "routed" : "unrouted",
+    wa_phone: fromDigits,
+    wa_message_id: waMessageId ?? null,
+    payload: body,
+    reason: `to_phone_number_id:${toPhoneNumberId ?? "null"} display:${toDisplayPhone ?? "null"}`,
+  } as any);
+} catch {}
+
+if (!companyId) {
+  console.error("companyId NULL — abortando antes do message_log. pid:", toPhoneNumberId, "display:", toDisplayPhone);
+  return NextResponse.json({ ok: true });
+}
+
+await db.from("message_log").insert({
       direction: "inbound",
       customer_phone: fromDigits,
       body: textRaw,
