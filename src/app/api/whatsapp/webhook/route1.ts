@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendWhatsApp } from "@/lib/whatsapp/send";
 import { SCHEDULE_CONFIG } from "@/config/schedule";
+import { verifyMetaSignature } from "@/lib/whatsapp/verifyMetaSignature";
+import { allowHit } from "@/lib/whatsapp/security/simpleRateLimit";
+
 
 // ✅ IMPORTANTE (BANCO / SUPABASE)
 // Para idempotência 100% (anti-retry da Meta), crie:
