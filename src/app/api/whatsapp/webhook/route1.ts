@@ -350,33 +350,8 @@ export async function POST(req: NextRequest) {
 
   const db = supabaseAdmin();
 
-  // ✅ FIX 1: Idempotência inbound FORTE (anti-retry da Meta)
-  // Tenta inserir inbound com wa_message_id; se já existe (unique), retorna e NÃO envia nada.
-  if (waMessageId) {
-    const ins = await db.from("message_log").insert({
-      direction: "inbound",
-      customer_phone: fromDigits,
-      body: textRaw,
-      wa_message_id: waMessageId, // ✅ coluna dedicada (crie no banco)
-      meta: { raw: body, wa: { phone_number_id: toPhoneNumberId ?? null, display_phone_number: toDisplayPhone ?? null } },
-    });
+  
 
-    if (ins.error) {
-      if (isUniqueViolation(ins.error)) {
-        return NextResponse.json({ ok: true });
-      }
-      console.error("message_log inbound insert error:", ins.error);
-      return NextResponse.json({ ok: true });
-    }
-  } else {
-    // fallback (sem id)
-    await db.from("message_log").insert({
-      direction: "inbound",
-      customer_phone: fromDigits,
-      body: textRaw,
-      meta: { raw: message },
-    });
-  }
 
   // ─────────────────────────────────────────────
   // Encontrar customer e company
@@ -440,9 +415,7 @@ export async function POST(req: NextRequest) {
   }
 
   const resolvedCompanyId = await resolveCompanyId();
-  
-  const companyId = resolvedCompanyId;
-if (!resolvedCompanyId) return NextResponse.json({ ok: true });
+  if (!resolvedCompanyId) return NextResponse.json({ ok: true });
 
   let customer: any = null;
 
@@ -475,6 +448,41 @@ if (!resolvedCompanyId) return NextResponse.json({ ok: true });
 
     customer = created.data;
   }
+
+  const companyId = resolvedCompanyId;
+
+  
+
+  
+  if (!companyId) return NextResponse.json({ ok: true });
+// ✅ FIX 1: Idempotência inbound FORTE (anti-retry da Meta)
+  // Tenta inserir inbound com wa_message_id; se já existe (unique), retorna e NÃO envia nada.
+  if (waMessageId) {
+    const ins = await db.from("message_log").insert({
+      direction: "inbound",
+      customer_phone: fromDigits,
+      body: textRaw,
+      wa_message_id: waMessageId, // ✅ coluna dedicada (crie no banco)
+      meta: { raw: body, wa: { phone_number_id: toPhoneNumberId ?? null, display_phone_number: toDisplayPhone ?? null } },
+    });
+
+    if (ins.error) {
+      if (isUniqueViolation(ins.error)) {
+        return NextResponse.json({ ok: true });
+      }
+      console.error("message_log inbound insert error:", ins.error);
+      return NextResponse.json({ ok: true });
+    }
+  } else {
+    // fallback (sem id)
+    await db.from("message_log").insert({
+      direction: "inbound",
+      customer_phone: fromDigits,
+      body: textRaw,
+      meta: { raw: message },
+    });
+  }
+
 // ✅ SOLO: garantir owner_id nas marcações criadas via WhatsApp
   // (a UI/availability/agenda usam owner_id para filtrar e bloquear horários)
   const { data: ownerProfile } = await db
