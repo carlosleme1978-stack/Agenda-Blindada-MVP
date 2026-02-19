@@ -3,8 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendWhatsApp } from "@/lib/whatsapp/send";
 import { SCHEDULE_CONFIG } from "@/config/schedule";
 import { verifyMetaSignature } from "@/lib/whatsapp/verifyMetaSignature";
-import { allowHit } from "@/lib/whatsapp/security/simpleRateLimit";
-
+import { allowHit } from "@/lib/security/simpleRateLimit";
 
 // ✅ IMPORTANTE (BANCO / SUPABASE)
 // Para idempotência 100% (anti-retry da Meta), crie:
@@ -324,7 +323,60 @@ export async function GET(req: NextRequest) {
 // Webhook Messages (POST)
 // ─────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  const body = await req.json();
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip") ||
+    "unknown";
+  const ua = req.headers.get("user-agent") || "unknown";
+
+  // ✅ Rate limit mínimo (memória). Em escala real: Redis/Upstash.
+  if (!allowHit(`wa:webhook:ip:${ip}`, 300, 60_000)) {
+    try {
+      const db = supabaseAdmin();
+      await db.from("webhook_audit").insert({
+        source: "meta",
+        event_type: "blocked",
+        ip,
+        user_agent: ua,
+        reason: "rate_limit_ip",
+      });
+    } catch {}
+    return NextResponse.json({ ok: true });
+  }
+
+  // ✅ RAW body é obrigatório para validar assinatura da Meta
+  const rawBody = await req.text();
+  const sig = req.headers.get("x-hub-signature-256");
+
+  let signatureOk = false;
+  try {
+    signatureOk = verifyMetaSignature(rawBody, sig);
+  } catch {
+    signatureOk = false;
+  }
+
+  if (!signatureOk) {
+    try {
+      const db = supabaseAdmin();
+      await db.from("webhook_audit").insert({
+        source: "meta",
+        event_type: "blocked",
+        ip,
+        user_agent: ua,
+        reason: "invalid_signature",
+        payload: rawBody ? JSON.parse(rawBody) : null,
+      });
+    } catch {}
+    return NextResponse.json({ ok: true });
+  }
+
+  let body: any;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return NextResponse.json({ ok: true });
+  }
+
   const entry = body.entry?.[0];
   const change = entry?.changes?.[0];
   const value = change?.value;
@@ -354,6 +406,7 @@ export async function POST(req: NextRequest) {
   // Tenta inserir inbound com wa_message_id; se já existe (unique), retorna e NÃO envia nada.
   if (waMessageId) {
     const ins = await db.from("message_log").insert({
+      company_id: resolvedCompanyId,
       direction: "inbound",
       customer_phone: fromDigits,
       body: textRaw,
@@ -371,6 +424,7 @@ export async function POST(req: NextRequest) {
   } else {
     // fallback (sem id)
     await db.from("message_log").insert({
+      company_id: resolvedCompanyId,
       direction: "inbound",
       customer_phone: fromDigits,
       body: textRaw,
@@ -440,7 +494,52 @@ export async function POST(req: NextRequest) {
   }
 
   const resolvedCompanyId = await resolveCompanyId();
-  if (!resolvedCompanyId) return NextResponse.json({ ok: true });
+  if (!resolvedCompanyId) {
+    try {
+      await db.from("webhook_audit").insert({
+        source: "meta",
+        event_type: "error",
+        ip,
+        user_agent: ua,
+        wa_phone: fromDigits,
+        wa_message_id: waMessageId ?? null,
+        payload: body,
+        reason: `company_not_found_for_phone_number_id:${toPhoneNumberId ?? "null"}`,
+      });
+    } catch {}
+    return NextResponse.json({ ok: true });
+  }
+
+
+  const companyId = resolvedCompanyId;
+  // ✅ DEDUPE (anti-replay): se a Meta reenviar o mesmo wa_message_id, ignoramos
+  if (waMessageId) {
+    try {
+      const { error } = await db.from("webhook_dedup").insert({
+        company_id: resolvedCompanyId,
+        source: "meta",
+        message_id: waMessageId,
+      });
+      if (error && String((error as any).message || "").toLowerCase().includes("duplicate")) {
+        return NextResponse.json({ ok: true });
+      }
+    } catch {}
+  }
+
+  // ✅ Audit OK
+  try {
+    await db.from("webhook_audit").insert({
+      company_id: resolvedCompanyId,
+      source: "meta",
+      event_type: "message",
+      ip,
+      user_agent: ua,
+      wa_phone: fromDigits,
+      wa_message_id: waMessageId ?? null,
+      payload: body,
+    });
+  } catch {}
+
 
   let customer: any = null;
 
@@ -449,7 +548,7 @@ export async function POST(req: NextRequest) {
     const r = await (db as any)
       .from("customers")
       .select("id, phone, company_id, name")
-      .eq("company_id", resolvedCompanyId)
+      .eq("company_id", companyId)
       .in("phone", candidates)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -473,8 +572,6 @@ export async function POST(req: NextRequest) {
 
     customer = created.data;
   }
-
-  const companyId = resolvedCompanyId;
 
   // ✅ SOLO: garantir owner_id nas marcações criadas via WhatsApp
   // (a UI/availability/agenda usam owner_id para filtrar e bloquear horários)
@@ -564,6 +661,7 @@ export async function POST(req: NextRequest) {
     if (upd.data && upd.data.length > 0) return;
 
     const ins = await db.from("chat_sessions").insert({
+      company_id: resolvedCompanyId,
       company_id: companyId,
       customer_id: customer.id,
       state: nextState,
@@ -586,6 +684,7 @@ export async function POST(req: NextRequest) {
     }
 
     const ins = await db.from("message_log").insert({
+      company_id: resolvedCompanyId,
       company_id: companyId,
       direction: "outbound",
       customer_phone: fromDigits,
