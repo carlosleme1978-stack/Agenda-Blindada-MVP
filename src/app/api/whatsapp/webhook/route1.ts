@@ -5,6 +5,7 @@ import { SCHEDULE_CONFIG } from "@/config/schedule";
 import { verifyMetaSignature } from "@/lib/whatsapp/verifyMetaSignature";
 import { allowHit } from "@/lib/security/simpleRateLimit";
 
+
 // ✅ IMPORTANTE (BANCO / SUPABASE)
 // Para idempotência 100% (anti-retry da Meta), crie:
 // - coluna: wa_message_id (text) em message_log
@@ -323,60 +324,7 @@ export async function GET(req: NextRequest) {
 // Webhook Messages (POST)
 // ─────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  const ip =
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-real-ip") ||
-    "unknown";
-  const ua = req.headers.get("user-agent") || "unknown";
-
-  // ✅ Rate limit mínimo (memória). Em escala real: Redis/Upstash.
-  if (!allowHit(`wa:webhook:ip:${ip}`, 300, 60_000)) {
-    try {
-      const db = supabaseAdmin();
-      await db.from("webhook_audit").insert({
-        source: "meta",
-        event_type: "blocked",
-        ip,
-        user_agent: ua,
-        reason: "rate_limit_ip",
-      });
-    } catch {}
-    return NextResponse.json({ ok: true });
-  }
-
-  // ✅ RAW body é obrigatório para validar assinatura da Meta
-  const rawBody = await req.text();
-  const sig = req.headers.get("x-hub-signature-256");
-
-  let signatureOk = false;
-  try {
-    signatureOk = verifyMetaSignature(rawBody, sig);
-  } catch {
-    signatureOk = false;
-  }
-
-  if (!signatureOk) {
-    try {
-      const db = supabaseAdmin();
-      await db.from("webhook_audit").insert({
-        source: "meta",
-        event_type: "blocked",
-        ip,
-        user_agent: ua,
-        reason: "invalid_signature",
-        payload: rawBody ? JSON.parse(rawBody) : null,
-      });
-    } catch {}
-    return NextResponse.json({ ok: true });
-  }
-
-  let body: any;
-  try {
-    body = JSON.parse(rawBody);
-  } catch {
-    return NextResponse.json({ ok: true });
-  }
-
+  const body = await req.json();
   const entry = body.entry?.[0];
   const change = entry?.changes?.[0];
   const value = change?.value;
@@ -402,7 +350,33 @@ export async function POST(req: NextRequest) {
 
   const db = supabaseAdmin();
 
-  
+  // ✅ FIX 1: Idempotência inbound FORTE (anti-retry da Meta)
+  // Tenta inserir inbound com wa_message_id; se já existe (unique), retorna e NÃO envia nada.
+  if (waMessageId) {
+    const ins = await db.from("message_log").insert({
+      direction: "inbound",
+      customer_phone: fromDigits,
+      body: textRaw,
+      wa_message_id: waMessageId, // ✅ coluna dedicada (crie no banco)
+      meta: { raw: body, wa: { phone_number_id: toPhoneNumberId ?? null, display_phone_number: toDisplayPhone ?? null } },
+    });
+
+    if (ins.error) {
+      if (isUniqueViolation(ins.error)) {
+        return NextResponse.json({ ok: true });
+      }
+      console.error("message_log inbound insert error:", ins.error);
+      return NextResponse.json({ ok: true });
+    }
+  } else {
+    // fallback (sem id)
+    await db.from("message_log").insert({
+      direction: "inbound",
+      customer_phone: fromDigits,
+      body: textRaw,
+      meta: { raw: message },
+    });
+  }
 
   // ─────────────────────────────────────────────
   // Encontrar customer e company
@@ -466,50 +440,9 @@ export async function POST(req: NextRequest) {
   }
 
   const resolvedCompanyId = await resolveCompanyId();
-  if (!resolvedCompanyId) {
-    try {
-      await db.from("webhook_audit").insert({
-        source: "meta",
-        event_type: "error",
-        ip,
-        user_agent: ua,
-        wa_phone: fromDigits,
-        wa_message_id: waMessageId ?? null,
-        payload: body,
-        reason: `company_not_found_for_phone_number_id:${toPhoneNumberId ?? "null"}`,
-      });
-    } catch {}
-    return NextResponse.json({ ok: true });
-  }
-
-  // ✅ DEDUPE (anti-replay): se a Meta reenviar o mesmo wa_message_id, ignoramos
-  if (waMessageId) {
-    try {
-      const { error } = await db.from("webhook_dedup").insert({
-        company_id: companyId,
-        source: "meta",
-        message_id: waMessageId,
-      });
-      if (error && String((error as any).message || "").toLowerCase().includes("duplicate")) {
-        return NextResponse.json({ ok: true });
-      }
-    } catch {}
-  }
-
-  // ✅ Audit OK
-  try {
-    await db.from("webhook_audit").insert({
-      company_id: companyId,
-      source: "meta",
-      event_type: "message",
-      ip,
-      user_agent: ua,
-      wa_phone: fromDigits,
-      wa_message_id: waMessageId ?? null,
-      payload: body,
-    });
-  } catch {}
-
+  
+  const companyId = resolvedCompanyId;
+if (!resolvedCompanyId) return NextResponse.json({ ok: true });
 
   let customer: any = null;
 
@@ -542,41 +475,6 @@ export async function POST(req: NextRequest) {
 
     customer = created.data;
   }
-
-  const companyId = resolvedCompanyId;
-
-  
-
-  // ✅ FIX 1: Idempotência inbound FORTE (anti-retry da Meta)
-  // Tenta inserir inbound com wa_message_id; se já existe (unique), retorna e NÃO envia nada.
-  if (waMessageId) {
-    const ins = await db.from("message_log").insert({
-      company_id: companyId,
-      direction: "inbound",
-      customer_phone: fromDigits,
-      body: textRaw,
-      wa_message_id: waMessageId, // ✅ coluna dedicada (crie no banco)
-      meta: { raw: body, wa: { phone_number_id: toPhoneNumberId ?? null, display_phone_number: toDisplayPhone ?? null } },
-    });
-
-    if (ins.error) {
-      if (isUniqueViolation(ins.error)) {
-        return NextResponse.json({ ok: true });
-      }
-      console.error("message_log inbound insert error:", ins.error);
-      return NextResponse.json({ ok: true });
-    }
-  } else {
-    // fallback (sem id)
-    await db.from("message_log").insert({
-      company_id: companyId,
-      direction: "inbound",
-      customer_phone: fromDigits,
-      body: textRaw,
-      meta: { raw: message },
-    });
-  }
-
 // ✅ SOLO: garantir owner_id nas marcações criadas via WhatsApp
   // (a UI/availability/agenda usam owner_id para filtrar e bloquear horários)
   const { data: ownerProfile } = await db
@@ -666,7 +564,6 @@ export async function POST(req: NextRequest) {
 
     const ins = await db.from("chat_sessions").insert({
       company_id: companyId,
-      company_id: companyId,
       customer_id: customer.id,
       state: nextState,
       context: nextCtx ?? {},
@@ -688,7 +585,6 @@ export async function POST(req: NextRequest) {
     }
 
     const ins = await db.from("message_log").insert({
-      company_id: companyId,
       company_id: companyId,
       direction: "outbound",
       customer_phone: fromDigits,
