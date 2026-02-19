@@ -341,6 +341,21 @@ export async function POST(req: NextRequest) {
 
   const fromDigits = onlyDigits(senderWa);
 
+  // ✅ Audit (sempre) — grava evento bruto antes de resolver company (sem company_id)
+  try {
+    await db.from("webhook_audit").insert({
+      source: "meta",
+      event_type: "received",
+      wa_phone: fromDigits,
+      wa_message_id: waMessageId ?? null,
+      payload: body,
+      reason: `to_phone_number_id:${toPhoneNumberId ?? "null"}`,
+    } as any);
+  } catch (e) {
+    console.error("webhook_audit(received) insert failed:", e);
+  }
+
+
   // ✅ Metadados do número da empresa (destino) — essencial para resolver a company correta
   const toPhoneNumberId: string | undefined = value?.metadata?.phone_number_id;
   const toDisplayPhone: string | undefined = value?.metadata?.display_phone_number;
@@ -417,7 +432,28 @@ export async function POST(req: NextRequest) {
   }
 
   const resolvedCompanyId = await resolveCompanyId();
-  if (!resolvedCompanyId) return NextResponse.json({ ok: true });
+  companyId = resolvedCompanyId;
+
+  
+  // ✅ Fail-fast: sem companyId não pode gravar nem responder (evita company_id NULL)
+  if (!companyId) {
+    console.error("companyId NULL — toPhoneNumberId:", toPhoneNumberId, "toDisplayPhone:", toDisplayPhone);
+    try {
+      await db.from("webhook_audit").insert({
+        source: "meta",
+        event_type: "error",
+        wa_phone: fromDigits,
+        wa_message_id: waMessageId ?? null,
+        payload: body,
+        reason: `company_not_found phone_number_id:${toPhoneNumberId ?? "null"}`,
+      } as any);
+    } catch (e) {
+      console.error("webhook_audit(error) insert failed:", e);
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+if (!resolvedCompanyId) return NextResponse.json({ ok: true });
 let customer: any = null;
 
   // ✅ Procura o customer dentro da company resolvida (NÃO procurar global, para não "pegar" a company errada)
