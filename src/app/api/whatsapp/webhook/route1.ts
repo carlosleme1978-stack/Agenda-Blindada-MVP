@@ -353,7 +353,9 @@ export async function POST(req: NextRequest) {
   
 
 
-  // ─────────────────────────────────────────────
+  
+  let companyId: string | null = null;
+// ─────────────────────────────────────────────
   // Encontrar customer e company
   // ─────────────────────────────────────────────
   const candidates = [fromDigits, `+${fromDigits}`];
@@ -416,10 +418,6 @@ export async function POST(req: NextRequest) {
 
   const resolvedCompanyId = await resolveCompanyId();
   if (!resolvedCompanyId) return NextResponse.json({ ok: true });
-
-  
-
-  const companyId = resolvedCompanyId;
 let customer: any = null;
 
   // ✅ Procura o customer dentro da company resolvida (NÃO procurar global, para não "pegar" a company errada)
@@ -455,6 +453,26 @@ if (!companyId) return NextResponse.json({ ok: true });
 // ✅ FIX 1: Idempotência inbound FORTE (anti-retry da Meta)
   // Tenta inserir inbound com wa_message_id; se já existe (unique), retorna e NÃO envia nada.
   if (waMessageId) {
+  // ✅ Resolve companyId cedo (antes de qualquer insert)
+  try {
+    const resolvedCompanyId = await resolveCompanyId();
+    companyId = resolvedCompanyId;
+  } catch {
+    companyId = null;
+  }
+
+  if (!companyId) {
+    try {
+      await db.from("webhook_audit").insert({
+        source: "meta",
+        event_type: "error",
+        reason: "company_id_null_before_processing",
+      });
+    } catch {}
+    return NextResponse.json({ ok: true });
+  }
+
+
     const ins = await db.from("message_log").insert({
       direction: "inbound",
       customer_phone: fromDigits,
