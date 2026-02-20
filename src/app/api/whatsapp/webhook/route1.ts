@@ -436,6 +436,7 @@ const candidates = [fromDigits, `+${fromDigits}`];
   // Tenta inserir inbound com wa_message_id; se já existe (unique), retorna e NÃO envia nada.
   if (waMessageId) {
     const ins = await db.from("message_log").insert({
+      company_id: resolvedCompanyId,
       direction: "inbound",
       customer_phone: fromDigits,
       body: textRaw,
@@ -453,6 +454,7 @@ const candidates = [fromDigits, `+${fromDigits}`];
   } else {
     // fallback (sem id)
     await db.from("message_log").insert({
+      company_id: resolvedCompanyId,
       direction: "inbound",
       customer_phone: fromDigits,
       body: textRaw,
