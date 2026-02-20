@@ -14,7 +14,7 @@ function NavLink({ href, label }: { href: string; label: string }) {
         textDecoration: "none",
         color: "var(--text)",
         fontSize: 14,
-        opacity: active ? 1 : 0.70,
+        opacity: active ? 1 : 0.7,
         padding: "8px 10px",
         borderRadius: 10,
         border: active ? "1px solid var(--card-border)" : "1px solid transparent",
@@ -28,17 +28,18 @@ function NavLink({ href, label }: { href: string; label: string }) {
 
 export default function Header() {
   const p = usePathname();
-  const r = useRouter();
+  const router = useRouter();
 
-  // Hide header on auth / marketing pages (keep app chrome only inside dashboard)
-  if (p === "/login" || p === "/planos" || p === "/forgot-password" || p === "/reset-password") return null;
+  // Hide header on auth/billing landing pages for a cleaner premium look
+  if (!p) return null;
+  if (p === "/login" || p === "/signup" || p === "/forgot-password" || p === "/planos") return null;
 
-  async function logout() {
+  async function onLogout() {
     try {
       await supabaseBrowser.auth.signOut();
     } finally {
-      r.push("/login");
-      r.refresh();
+      router.push("/login");
+      router.refresh();
     }
   }
 
@@ -83,9 +84,10 @@ export default function Header() {
           <NavLink href="/dashboard/clientes" label="Clientes" />
           <NavLink href="/dashboard/financeiro" label="Financeiro" />
           <NavLink href="/dashboard/insights" label="Insights" />
+
           <Link
             href="/dashboard/settings"
-            title="Settings"
+            title="Configurações"
             style={{
               marginLeft: 6,
               width: 34,
@@ -103,22 +105,21 @@ export default function Header() {
           </Link>
 
           <button
-            onClick={logout}
+            onClick={onLogout}
             title="Sair"
             style={{
               marginLeft: 6,
-              width: 34,
               height: 34,
+              padding: "0 12px",
               borderRadius: 12,
-              display: "grid",
-              placeItems: "center",
-              color: "var(--text)",
               border: "1px solid var(--btn-border)",
               background: "var(--btn-bg)",
+              color: "var(--text)",
               cursor: "pointer",
+              fontWeight: 800,
             }}
           >
-            ⎋
+            Sair
           </button>
         </div>
       </div>
