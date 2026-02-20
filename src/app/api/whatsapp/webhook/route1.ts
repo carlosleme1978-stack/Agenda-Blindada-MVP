@@ -324,7 +324,28 @@ export async function GET(req: NextRequest) {
 // Webhook Messages (POST)
 // ─────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  const body = await req.json();
+  // ─────────────────────────────────────────────
+  // Segurança: rate-limit + assinatura Meta (x-hub-signature-256)
+  // ─────────────────────────────────────────────
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip") ||
+    "unknown";
+
+  // Responde 200 para a Meta não re-tentar em loop, mas corta processamento se abusivo
+  if (!allowHit(`meta-webhook:${ip}`, 300, 60_000)) {
+    return NextResponse.json({ ok: true });
+  }
+
+  // Precisamos do rawBody para validar assinatura
+  const rawBody = await req.text();
+  const sig = req.headers.get("x-hub-signature-256");
+  const sigOk = verifyMetaSignature(rawBody, sig);
+  if (!sigOk) {
+    return NextResponse.json({ ok: false, error: "invalid signature" }, { status: 401 });
+  }
+
+  const body = JSON.parse(rawBody);
   const entry = body.entry?.[0];
   const change = entry?.changes?.[0];
   const value = change?.value;
