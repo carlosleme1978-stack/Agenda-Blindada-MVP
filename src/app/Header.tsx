@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { supabaseBrowser } from "@/lib/supabase/browser";
 
 function NavLink({ href, label }: { href: string; label: string }) {
   const p = usePathname();
@@ -27,9 +28,19 @@ function NavLink({ href, label }: { href: string; label: string }) {
 
 export default function Header() {
   const p = usePathname();
+  const r = useRouter();
 
-  // Hide header on login page for a cleaner premium look
-  if (p === "/login") return null;
+  // Hide header on auth / marketing pages (keep app chrome only inside dashboard)
+  if (p === "/login" || p === "/planos" || p === "/forgot-password" || p === "/reset-password") return null;
+
+  async function logout() {
+    try {
+      await supabaseBrowser.auth.signOut();
+    } finally {
+      r.push("/login");
+      r.refresh();
+    }
+  }
 
   return (
     <div
@@ -90,6 +101,25 @@ export default function Header() {
           >
             ⚙︎
           </Link>
+
+          <button
+            onClick={logout}
+            title="Sair"
+            style={{
+              marginLeft: 6,
+              width: 34,
+              height: 34,
+              borderRadius: 12,
+              display: "grid",
+              placeItems: "center",
+              color: "var(--text)",
+              border: "1px solid var(--btn-border)",
+              background: "var(--btn-bg)",
+              cursor: "pointer",
+            }}
+          >
+            ⎋
+          </button>
         </div>
       </div>
     </div>
