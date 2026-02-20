@@ -1,25 +1,28 @@
 import { createBrowserClient } from "@supabase/ssr";
 
-// Accept multiple env var names to avoid misconfiguration between installs/Vercel.
-const SUPABASE_URL =
+/**
+ * Browser Supabase client.
+ * IMPORTANT: Requires NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_ANON_KEY at build time (Vercel).
+ * We also accept a few legacy env var names to avoid silent breakage.
+ */
+const url =
   process.env.NEXT_PUBLIC_SUPABASE_URL ||
   process.env.NEXT_PUBLIC_SUPABASE_PROJECT_URL ||
+  process.env.NEXT_PUBLIC_SUPABASE_API_URL ||
   "";
 
-const SUPABASE_ANON_KEY =
+const anonKey =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  process.env.NEXT_PUBLIC_SUPABASE_KEY ||
   process.env.NEXT_PUBLIC_SUPABASE_PUBLIC_ANON_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLIC_KEY ||
   "";
 
-// NOTE: If either env is missing, requests will fail with "No API key found in request".
-// We keep the app running but log a clear error to help fix Vercel/.env.
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  // eslint-disable-next-line no-console
+if (!url || !anonKey) {
+  // This is the exact root-cause of: {"message":"No API key found in request"...}
   console.error(
-    "[Supabase] Missing NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY. " +
-      "Set them in .env.local and Vercel Environment Variables (NEXT_PUBLIC_*)."
+    "[Supabase] Missing public env vars. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel (Production + Preview) and in .env.local."
   );
 }
 
-export const supabaseBrowser = createBrowserClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+export const supabaseBrowser = createBrowserClient(url, anonKey);

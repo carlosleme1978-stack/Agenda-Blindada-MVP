@@ -117,7 +117,7 @@ export default function ServicesClient() {
     setMsg(null);
     try {
       const res = await ensureAccess(sb, {
-        requireActiveSubscription: true,
+        requireActiveSubscription: false,
         requireOnboardingComplete: false,
       });
       if (!res.ok || !res.company) return;
