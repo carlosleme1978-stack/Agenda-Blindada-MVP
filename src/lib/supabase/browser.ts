@@ -44,7 +44,14 @@ export function supabaseBrowser() {
     );
   }
 
-  const client = createBrowserClient(url, anonKey);
-  if (typeof window !== "undefined") window.__AB_SUPABASE__ = client;
-  return client;
+  const cleanUrl = (url || "").trim();
+const cleanAnon = (anonKey || "").trim().replace(/\s+/g, ""); // remove espaços e quebras
+
+if (!cleanUrl || !cleanAnon) {
+  console.error("[Supabase] Missing env after sanitize.");
+}
+
+const client = createBrowserClient(cleanUrl, cleanAnon);
+if (typeof window !== "undefined") window.__AB_SUPABASE__ = client;
+return client;
 }
