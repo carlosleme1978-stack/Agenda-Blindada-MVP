@@ -2,9 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { createBrowserSupabaseClient } from "@supabase/auth-helpers-nextjs";
-
-const supabaseBrowser = createBrowserSupabaseClient();
+import { supabaseBrowser } from "@/lib/supabase/browser";
 
 function parseHashParams() {
   if (typeof window === "undefined") return new URLSearchParams();
@@ -72,7 +70,7 @@ export default function ResetPasswordPage() {
 
       try {
         if (code) {
-          const { error } = await supabaseBrowser.auth.exchangeCodeForSession(code);
+          const { error } = await supabaseBrowser().auth.exchangeCodeForSession(code);
           if (error) {
             setMsg("O link é inválido ou expirou. Peça um novo link.");
             setReady(false);
@@ -101,7 +99,7 @@ export default function ResetPasswordPage() {
           const refresh_token = hp.get("refresh_token");
 
           if (access_token && refresh_token) {
-            const { error: setErr } = await supabaseBrowser.auth.setSession({
+            const { error: setErr } = await supabaseBrowser().auth.setSession({
               access_token,
               refresh_token,
             });
@@ -113,7 +111,7 @@ export default function ResetPasswordPage() {
           }
         }
 
-        const { data } = await supabaseBrowser.auth.getSession();
+        const { data } = await supabaseBrowser().auth.getSession();
         const ok = !!data.session;
         setReady(ok);
         if (!ok) {
@@ -141,7 +139,7 @@ export default function ResetPasswordPage() {
 
     setLoading(true);
     try {
-      const { error } = await supabaseBrowser.auth.updateUser({ password });
+      const { error } = await supabaseBrowser().auth.updateUser({ password });
       if (error) {
         setMsg("Não consegui atualizar a senha. Peça um novo link e tente novamente.");
         return;

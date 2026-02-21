@@ -13,7 +13,7 @@ type Row = {
 };
 
 export default function AdminCompaniesClient() {
-  const sb = supabaseBrowser;
+  const sb = supabaseBrowser();
   const [rows, setRows] = useState<Row[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

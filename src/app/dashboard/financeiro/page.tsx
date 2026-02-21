@@ -49,7 +49,7 @@ function cardStyle(strong?: boolean): React.CSSProperties {
 const DOW = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
 export default function FinanceiroPage() {
-  const supabase = supabaseBrowser;
+  const supabase = supabaseBrowser();
 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);

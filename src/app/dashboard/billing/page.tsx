@@ -15,7 +15,7 @@ type Company = {
 };
 
 export default function BillingPage() {
-  const sb = supabaseBrowser;
+  const sb = supabaseBrowser();
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState<null | "basic" | "pro">(null);
   const [msg, setMsg] = useState<string | null>(null);

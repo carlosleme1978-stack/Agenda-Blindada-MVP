@@ -324,28 +324,7 @@ export async function GET(req: NextRequest) {
 // Webhook Messages (POST)
 // ─────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  // ─────────────────────────────────────────────
-  // Segurança: rate-limit + assinatura Meta (x-hub-signature-256)
-  // ─────────────────────────────────────────────
-  const ip =
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-real-ip") ||
-    "unknown";
-
-  // Responde 200 para a Meta não re-tentar em loop, mas corta processamento se abusivo
-  if (!allowHit(`meta-webhook:${ip}`, 300, 60_000)) {
-    return NextResponse.json({ ok: true });
-  }
-
-  // Precisamos do rawBody para validar assinatura
-  const rawBody = await req.text();
-  const sig = req.headers.get("x-hub-signature-256");
-  const sigOk = verifyMetaSignature(rawBody, sig);
-  if (!sigOk) {
-    return NextResponse.json({ ok: false, error: "invalid signature" }, { status: 401 });
-  }
-
-  const body = JSON.parse(rawBody);
+  const body = await req.json();
   const entry = body.entry?.[0];
   const change = entry?.changes?.[0];
   const value = change?.value;
@@ -436,7 +415,6 @@ const candidates = [fromDigits, `+${fromDigits}`];
   // Tenta inserir inbound com wa_message_id; se já existe (unique), retorna e NÃO envia nada.
   if (waMessageId) {
     const ins = await db.from("message_log").insert({
-      company_id: resolvedCompanyId,
       direction: "inbound",
       customer_phone: fromDigits,
       body: textRaw,
@@ -454,7 +432,6 @@ const candidates = [fromDigits, `+${fromDigits}`];
   } else {
     // fallback (sem id)
     await db.from("message_log").insert({
-      company_id: resolvedCompanyId,
       direction: "inbound",
       customer_phone: fromDigits,
       body: textRaw,

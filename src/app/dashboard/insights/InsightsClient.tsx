@@ -86,7 +86,7 @@ function Icon({ name, color }: { name: CardData["icon"]; color: string }) {
 }
 
 export default function InsightsClient() {
-  const sb = supabaseBrowser;
+  const sb = supabaseBrowser();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

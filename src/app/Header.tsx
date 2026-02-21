@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { supabaseBrowser } from "@/lib/supabase/browser";
+import { usePathname } from "next/navigation";
 
 function NavLink({ href, label }: { href: string; label: string }) {
   const p = usePathname();
@@ -14,7 +13,7 @@ function NavLink({ href, label }: { href: string; label: string }) {
         textDecoration: "none",
         color: "var(--text)",
         fontSize: 14,
-        opacity: active ? 1 : 0.7,
+        opacity: active ? 1 : 0.70,
         padding: "8px 10px",
         borderRadius: 10,
         border: active ? "1px solid var(--card-border)" : "1px solid transparent",
@@ -28,20 +27,9 @@ function NavLink({ href, label }: { href: string; label: string }) {
 
 export default function Header() {
   const p = usePathname();
-  const router = useRouter();
 
-  // Hide header on auth/billing landing pages for a cleaner premium look
-  if (!p) return null;
-  if (p === "/login" || p === "/signup" || p === "/forgot-password" || p === "/planos") return null;
-
-  async function onLogout() {
-    try {
-      await supabaseBrowser.auth.signOut();
-    } finally {
-      router.push("/login");
-      router.refresh();
-    }
-  }
+  // Hide header on login page for a cleaner premium look
+  if (p === "/login") return null;
 
   return (
     <div
@@ -84,10 +72,9 @@ export default function Header() {
           <NavLink href="/dashboard/clientes" label="Clientes" />
           <NavLink href="/dashboard/financeiro" label="Financeiro" />
           <NavLink href="/dashboard/insights" label="Insights" />
-
           <Link
             href="/dashboard/settings"
-            title="Configurações"
+            title="Settings"
             style={{
               marginLeft: 6,
               width: 34,
@@ -103,24 +90,6 @@ export default function Header() {
           >
             ⚙︎
           </Link>
-
-          <button
-            onClick={onLogout}
-            title="Sair"
-            style={{
-              marginLeft: 6,
-              height: 34,
-              padding: "0 12px",
-              borderRadius: 12,
-              border: "1px solid var(--btn-border)",
-              background: "var(--btn-bg)",
-              color: "var(--text)",
-              cursor: "pointer",
-              fontWeight: 800,
-            }}
-          >
-            Sair
-          </button>
         </div>
       </div>
     </div>

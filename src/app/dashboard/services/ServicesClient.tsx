@@ -5,7 +5,6 @@ import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { ensureAccess, type Company } from "@/lib/access";
 
-
 type CategoryRow = {
   id: string;
   name: string;
@@ -30,7 +29,7 @@ type ServiceRow = {
 type Tab = "services" | "categories";
 
 export default function ServicesClient() {
-  const sb = supabaseBrowser;
+  const sb = supabaseBrowser();
   const [company, setCompany] = useState<Company | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -118,7 +117,7 @@ export default function ServicesClient() {
     setMsg(null);
     try {
       const res = await ensureAccess(sb, {
-        requireActiveSubscription: false,
+        requireActiveSubscription: true,
         requireOnboardingComplete: false,
       });
       if (!res.ok || !res.company) return;

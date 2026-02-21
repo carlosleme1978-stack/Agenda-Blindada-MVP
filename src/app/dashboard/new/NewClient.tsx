@@ -31,7 +31,7 @@ export default function NewClient() {
   useEffect(() => {
     // Protect route + load categories/services
     (async () => {
-      const sb = supabaseBrowser;
+      const sb = supabaseBrowser();
       const access = await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
       if (!access.ok) return;
 
@@ -60,7 +60,7 @@ export default function NewClient() {
   async function onChangeCategory(newCatId: string) {
     setCategoryId(newCatId);
     setServiceId("");
-    const sb = supabaseBrowser;
+    const sb = supabaseBrowser();
     const { data: svs } = await sb.from("services").select("id,name,duration_minutes,price_cents,currency,category_id").eq("active", true).order("name");
     const svList = (svs ?? []) as any[];
     const filtered = newCatId ? svList.filter((s) => String(s.category_id) === String(newCatId)) : svList;
@@ -112,7 +112,7 @@ async function loadSlots(nextDate?: string, _nextStaffId?: string, nextMinutes?:
     setMsg(null);
 
     try {
-      const sb = supabaseBrowser;
+      const sb = supabaseBrowser();
       const { data: sess } = await sb.auth.getSession();
       const token = sess.session?.access_token;
       if (!token) {
@@ -175,7 +175,7 @@ async function loadSlots(nextDate?: string, _nextStaffId?: string, nextMinutes?:
     setLoading(true);
 
     try {
-      const sb = supabaseBrowser;
+      const sb = supabaseBrowser();
 
       const access = await ensureAccess(sb, { requireActiveSubscription: true, requireOnboardingComplete: true });
       if (!access.ok) return;

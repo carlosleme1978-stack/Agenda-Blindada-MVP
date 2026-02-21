@@ -217,7 +217,7 @@ function AppointmentModal({ appt, services, loading, onClose }: { appt: ApptRow;
 }
 
 export default function AgendaPage() {
-  const supabase = useMemo(() => supabaseBrowser, []);
+  const supabase = useMemo(() => supabaseBrowser(), []);
   const [selected, setSelected] = useState(() => startOfDay(new Date()));
   const [rows, setRows] = useState<ApptRow[]>([]);
   const [loading, setLoading] = useState(true);
