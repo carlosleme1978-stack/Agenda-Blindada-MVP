@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { supabaseBrowser } from "@/lib/supabase/browser";
 
 function NavLink({ href, label }: { href: string; label: string }) {
   const p = usePathname();
@@ -27,6 +28,17 @@ function NavLink({ href, label }: { href: string; label: string }) {
 
 export default function Header() {
   const p = usePathname();
+  const r = useRouter();
+  const sb = supabaseBrowser();
+
+  async function logout() {
+    try {
+      await sb.auth.signOut();
+    } finally {
+      r.push("/login");
+    }
+  }
+
 
   // Hide header on login page for a cleaner premium look
   if (p === "/login") return null;
@@ -90,6 +102,23 @@ export default function Header() {
           >
             ⚙︎
           </Link>
+          <button
+            onClick={logout}
+            title="Sair"
+            style={{
+              marginLeft: 6,
+              height: 34,
+              padding: "0 12px",
+              borderRadius: 12,
+              border: "1px solid var(--btn-border)",
+              background: "var(--btn-bg)",
+              color: "var(--text)",
+              cursor: "pointer",
+              fontWeight: 900,
+            }}
+          >
+            Sair
+          </button>
         </div>
       </div>
     </div>

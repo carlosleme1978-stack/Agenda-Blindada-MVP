@@ -8,6 +8,10 @@ export type Company = {
   staff_limit?: number | null;
   sub_basic_status?: string | null;
   sub_pro_status?: string | null;
+  stripe_subscription_status?: string | null;
+  support_override_until?: string | null;
+  support_override_reason?: string | null;
+  default_staff_id?: string | null;
   // Onboarding fields (we add in supabase/schema.sql)
   onboarding_complete?: boolean | null;
   default_duration_minutes?: number | null;
@@ -25,10 +29,28 @@ export type AccessResult = {
 };
 
 export function isSubscriptionActive(company: Company): boolean {
+  // Support override (production-safe): temporarily allow access even if billing is inactive.
+  // Store as timestamptz in DB; here it's a string.
+  if (company.support_override_until) {
+    const until = new Date(company.support_override_until).getTime();
+    if (!Number.isNaN(until) && until > Date.now()) return true;
+  }
+
+  // Stripe unified status (if used)
+  const stripe = (company.stripe_subscription_status ?? "").toLowerCase();
+  if (stripe === "active" || stripe === "trialing") return true;
+
+  // Legacy dual-status fields
   const basic = (company.sub_basic_status ?? "").toLowerCase() === "active";
   const pro = (company.sub_pro_status ?? "").toLowerCase() === "active";
-  // Some DBs store a single status. If that's your case, add it here later.
   return basic || pro;
+}
+
+export function isDevBillingBypassEnabled(): boolean {
+  // Only allow bypass outside production builds.
+  const bypass = (process.env.NEXT_PUBLIC_BYPASS_BILLING ?? "").trim() === "1";
+  const isProd = process.env.NODE_ENV === "production";
+  return bypass && !isProd;
 }
 
 export async function getCompanyForCurrentUser(sb: SupabaseClient): Promise<AccessResult> {
@@ -65,13 +87,27 @@ export async function getCompanyForCurrentUser(sb: SupabaseClient): Promise<Acce
 
   if (perr || !prof?.company_id) return { ok: false, reason: "NO_PROFILE" };
 
-  const { data: comp, error: cerr } = await sb
-    .from("companies")
-    .select(
-      "id,name,plan,staff_limit,sub_basic_status,sub_pro_status,onboarding_complete,default_duration_minutes"
-    )
-    .eq("id", prof.company_id)
-    .single();
+  // Some installs may not have all billing columns yet (e.g. older schema).
+  // Try an extended select first, then fallback to a minimal select if PostgREST complains about missing columns.
+  const selectExtended =
+    "id,name,plan,staff_limit,sub_basic_status,sub_pro_status,stripe_subscription_status,support_override_until,support_override_reason,default_staff_id,onboarding_complete,default_duration_minutes";
+  const selectMinimal =
+    "id,name,plan,staff_limit,stripe_subscription_status,support_override_until,support_override_reason,default_staff_id,onboarding_complete,default_duration_minutes";
+
+  let comp: any = null;
+  let cerr: any = null;
+
+  {
+    const r = await sb.from("companies").select(selectExtended).eq("id", prof.company_id).single();
+    comp = r.data;
+    cerr = r.error;
+  }
+
+  if (cerr && /does not exist/i.test(cerr.message || "")) {
+    const r2 = await sb.from("companies").select(selectMinimal).eq("id", prof.company_id).single();
+    comp = r2.data;
+    cerr = r2.error;
+  }
 
   if (cerr || !comp) return { ok: false, reason: "NO_COMPANY" };
 
@@ -98,7 +134,9 @@ export async function ensureAccess(
 
   const company = res.company!;
 
-  if (opts.requireActiveSubscription && !isSubscriptionActive(company)) {
+  const DEV_BYPASS = isDevBillingBypassEnabled();
+
+  if (opts.requireActiveSubscription && !DEV_BYPASS && !isSubscriptionActive(company)) {
     window.location.href = billingUrl;
     return { ok: false, reason: "INACTIVE_SUB", company, profile: res.profile };
   }
