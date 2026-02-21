@@ -218,12 +218,12 @@ export default function OnboardingClient() {
   const wrap: React.CSSProperties = {
     minHeight: "100vh",
     background:
-      "radial-gradient(1200px 800px at 20% 20%, rgba(99,102,241,0.22), transparent 60%), radial-gradient(900px 700px at 80% 30%, rgba(236,72,153,0.14), transparent 55%), radial-gradient(900px 700px at 55% 85%, rgba(16,185,129,0.12), transparent 55%), linear-gradient(180deg, #f8fafc 0%, #eef2ff 60%, #ecfeff 100%)",
+      "radial-gradient(1200px 800px at 20% 20%, rgba(157, 157, 181, 0.22), transparent 60%), radial-gradient(900px 700px at 80% 30%, rgba(236,72,153,0.14), transparent 55%), radial-gradient(900px 700px at 55% 85%, rgba(16,185,129,0.12), transparent 55%), linear-gradient(180deg, #f8fafc 0%, #eef2ff 60%, #ecfeff 100%)",
     padding: 24,
   };
 
   const card: React.CSSProperties = {
-    background: "rgba(255,255,255,0.86)",
+    background: "rgba(91, 91, 139, 0.22))",
     border: "1px solid rgba(0,0,0,0.06)",
     borderRadius: 20,
     boxShadow: "0 30px 60px rgba(15, 23, 42, 0.08), 0 8px 18px rgba(15, 23, 42, 0.05)",
@@ -238,7 +238,7 @@ export default function OnboardingClient() {
     border: "1px solid rgba(2, 6, 23, 0.12)",
     outline: "none",
     fontSize: 14,
-    background: "rgba(255,255,255,0.95)",
+    background: "rgba(5, 11, 65, 0.95)",
   };
 
   const btn: React.CSSProperties = {
@@ -248,7 +248,8 @@ export default function OnboardingClient() {
     cursor: "pointer",
     fontWeight: 900,
     letterSpacing: -0.2,
-    background: "rgba(255,255,255,0.85)",
+    background: "rgba(0, 0, 0, 0.85)",
+    color: "white",
   };
 
   const primaryBtn: React.CSSProperties = {
@@ -259,7 +260,7 @@ export default function OnboardingClient() {
     cursor: "pointer",
     fontWeight: 900,
     letterSpacing: -0.2,
-    color: "white",
+    color: "black",
     background: "linear-gradient(135deg, rgba(17,94,89,1), rgba(59,130,246,1))",
     boxShadow: "0 14px 26px rgba(59,130,246,0.25)",
     opacity: saving ? 0.85 : 1,
@@ -270,8 +271,8 @@ export default function OnboardingClient() {
       <main style={{ maxWidth: 980, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: 26, letterSpacing: -0.6 }}>Configuração inicial</h1>
-            <p style={{ margin: "6px 0 0", opacity: 0.7, fontSize: 14 }}>Deixe sua Agenda Blindada pronta em poucos minutos.</p>
+            <h1 style={{ margin: 0, fontSize: 26, letterSpacing: -0.6, color: "black" }}>Configuração inicial</h1>
+            <p style={{ margin: "6px 0 0", opacity: 0.7, fontSize: 14, color: "black", }}>Deixe sua Agenda Blindada pronta em poucos minutos.</p>
           </div>
 
           <div style={{ display: "flex", gap: 10 }}>
@@ -281,8 +282,8 @@ export default function OnboardingClient() {
                 textDecoration: "none",
                 padding: "10px 12px",
                 borderRadius: 12,
-                border: "1px solid rgba(2,6,23,0.10)",
-                background: "rgba(255,255,255,0.85)",
+                border: "1px solid rgba(216, 222, 245, 0.1)",
+                background: "rgba(203, 201, 227, 0.85)",
                 color: "#0f172a",
                 fontWeight: 800,
                 fontSize: 13,
@@ -331,9 +332,9 @@ export default function OnboardingClient() {
               {/* STEP 1 */}
               {step === 1 && (
                 <div>
-                  <div style={{ fontWeight: 950, letterSpacing: -0.3, fontSize: 18, marginBottom: 8 }}>O mínimo para funcionar</div>
+                  <div style={{ fontWeight: 950, letterSpacing: -0.3, fontSize: 18, marginBottom: 8, color: "black", }}>O mínimo para funcionar</div>
 
-                  <label style={{ fontSize: 13, fontWeight: 800 }}>Nome do negócio</label>
+                  <label style={{ fontSize: 13, fontWeight: 800, color: "black", }}>Nome do negócio</label>
                   <input
                     style={{ ...input, marginTop: 6 }}
                     value={companyName}
@@ -343,7 +344,8 @@ export default function OnboardingClient() {
 
                   <div style={{ height: 12 }} />
 
-                  <label style={{ fontSize: 13, fontWeight: 800 }}>Tempo padrão por atendimento (min)</label>
+                  <label style={{ fontSize: 13, fontWeight: 800, 
+                    color:"black" }}>Tempo padrão por atendimento (min)</label>
                   <input
                     type="number"
                     min={5}
@@ -352,7 +354,9 @@ export default function OnboardingClient() {
                     value={duration}
                     onChange={(e) => setDuration(parseInt(e.target.value || "30", 10))}
                   />
-                  <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>Recomendado: 30, 45 ou 60 minutos.</div>
+                  <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75, 
+                    color: "black"
+                }}>Recomendado: 30, 45 ou 60 minutos.</div>
 
                   <div style={{ height: 16 }} />
 
@@ -365,12 +369,12 @@ export default function OnboardingClient() {
               {/* STEP 2 */}
               {step === 2 && (
                 <div>
-                  <div style={{ fontWeight: 950, letterSpacing: -0.3, fontSize: 18, marginBottom: 8 }}>Serviços</div>
-                  <div style={{ fontSize: 13, opacity: 0.75, marginBottom: 12 }}>
+                  <div style={{ fontWeight: 950, letterSpacing: -0.3, fontSize: 18, marginBottom: 8, color: "black", }}>Serviços</div>
+                  <div style={{ fontSize: 13, opacity: 0.75, marginBottom: 12, color: "black", }}>
                     Crie pelo menos 1 serviço. É isso que o WhatsApp vai listar.
                   </div>
 
-                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 10 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "0.3fr 0.2fr 0.2fr", gap: 40 }}>
                     <input
                       style={input}
                       value={newSvcName}
@@ -413,11 +417,11 @@ export default function OnboardingClient() {
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "space-between",
-                            gap: 10,
+                            gap: 30,
                             padding: "10px 12px",
                             borderRadius: 14,
                             border: "1px solid rgba(2,6,23,0.10)",
-                            background: "rgba(255,255,255,0.85)",
+                            background: "rgba(4, 17, 56, 0.85)",
                             opacity: s.active ? 1 : 0.55,
                           }}
                         >
@@ -451,19 +455,19 @@ export default function OnboardingClient() {
               {/* STEP 3 */}
               {step === 3 && (
                 <div>
-                  <div style={{ fontWeight: 950, letterSpacing: -0.3, fontSize: 18, marginBottom: 8 }}>Horário de atendimento</div>
+                  <div style={{ fontWeight: 950, letterSpacing: -0.3, fontSize: 18, marginBottom: 8, color: "black" }}>Horário de atendimento</div>
 
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "0.1fr 0.1fr 0.1fr", gap: 40 }}>
                     <div>
-                      <label style={{ fontSize: 13, fontWeight: 800 }}>Início</label>
+                      <label style={{ fontSize: 13, fontWeight: 800, color: "black" }}>Início</label>
                       <input style={{ ...input, marginTop: 6 }} value={workStart} onChange={(e) => setWorkStart(e.target.value)} placeholder="09:00" />
                     </div>
                     <div>
-                      <label style={{ fontSize: 13, fontWeight: 800 }}>Fim</label>
+                      <label style={{ fontSize: 13, fontWeight: 800, color: "black" }}>Fim</label>
                       <input style={{ ...input, marginTop: 6 }} value={workEnd} onChange={(e) => setWorkEnd(e.target.value)} placeholder="18:00" />
                     </div>
                     <div>
-                      <label style={{ fontSize: 13, fontWeight: 800 }}>Intervalo (min)</label>
+                      <label style={{ fontSize: 13, fontWeight: 800, color: "black" }}>Intervalo </label>
                       <input
                         type="number"
                         min={5}
@@ -477,7 +481,7 @@ export default function OnboardingClient() {
 
                   <div style={{ height: 12 }} />
 
-                  <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6 }}>Dias de atendimento</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6, color: "black" }}>Dias de atendimento</div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {days.map((d) => {
                       const on = workDays.includes(d.v);
@@ -488,7 +492,7 @@ export default function OnboardingClient() {
                           onClick={() => toggleDay(d.v)}
                           style={{
                             ...btn,
-                            background: on ? "rgba(59,130,246,0.12)" : "rgba(255,255,255,0.85)",
+                            background: on ? "rgba(4, 20, 46, 0.12)" : "rgba(183, 83, 83, 0.85)",
                             borderColor: on ? "rgba(59,130,246,0.35)" : "rgba(2,6,23,0.10)",
                           }}
                         >
@@ -504,7 +508,7 @@ export default function OnboardingClient() {
                     {saving ? "A guardar…" : "Finalizar e ir ao painel"}
                   </button>
 
-                  <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+                  <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75, color: "black" }}>
                     Depois você pode ajustar tudo no painel (em versões futuras).
                   </div>
                 </div>

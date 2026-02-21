@@ -441,7 +441,7 @@ export default function ServicesClient() {
         ) : tab === "categories" ? (
           <>
             {/* ADD CATEGORY */}
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr auto", gap: 10, alignItems: "end" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "0.4fr 0.4fr 0.2fr auto", gap: 40, alignItems: "end" }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 800 }}>Nome da categoria</div>
                 <input style={{ ...input, marginTop: 6 }} value={catName} onChange={(e) => setCatName(e.target.value)} placeholder="Ex: Depilação feminina" />
@@ -487,17 +487,17 @@ export default function ServicesClient() {
             <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1.3fr 0.7fr auto", gap: 10, alignItems: "end" }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 800 }}>Nome</div>
-                <input style={{ ...input, marginTop: 6 }} value={svcName} onChange={(e) => setSvcName(e.target.value)} placeholder="Ex: Axila" />
+                <input style={{ ...input, marginTop: 6, width: "90%" }} value={svcName} onChange={(e) => setSvcName(e.target.value)} placeholder="Ex: Axila" />
               </div>
 
               <div>
                 <div style={{ fontSize: 13, fontWeight: 800 }}>Duração (min)</div>
-                <input style={{ ...input, marginTop: 6 }} type="number" min={5} step={5} value={svcMins} onChange={(e) => setSvcMins(parseInt(e.target.value || "30", 10))} />
+                <input style={{ ...input, marginTop: 6, width: "60px" }} type="number" min={5} step={5} value={svcMins} onChange={(e) => setSvcMins(parseInt(e.target.value || "30", 10))} />
               </div>
 
               <div>
                 <div style={{ fontSize: 13, fontWeight: 800 }}>Preço (€)</div>
-                <input style={{ ...input, marginTop: 6 }} value={svcPrice} onChange={(e) => setSvcPrice(e.target.value)} placeholder="Ex: 10,00" />
+                <input style={{ ...input, marginTop: 6, width: "60px" }} value={svcPrice} onChange={(e) => setSvcPrice(e.target.value)} placeholder="Ex: 10,00" />
               </div>
 
               <div>
@@ -519,7 +519,7 @@ export default function ServicesClient() {
 
               <div>
                 <div style={{ fontSize: 13, fontWeight: 800 }}>Ordem</div>
-                <input style={{ ...input, marginTop: 6 }} type="number" step={1} value={svcOrder} onChange={(e) => setSvcOrder(parseInt(e.target.value || "0", 10))} />
+                <input style={{ ...input, marginTop: 6, width: "60px" }} type="number" step={1} value={svcOrder} onChange={(e) => setSvcOrder(parseInt(e.target.value || "0", 10))} />
               </div>
 
               <button disabled={saving} style={btn} onClick={addService} type="button">
