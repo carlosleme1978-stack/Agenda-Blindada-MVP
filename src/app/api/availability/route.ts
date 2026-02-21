@@ -59,8 +59,8 @@ export async function GET(req: Request) {
 
     const url = new URL(req.url);
     const date = String(url.searchParams.get("date") || "").trim(); // YYYY-MM-DD
-    // Modelo Solo: staff_id opcional (ignorado)
-    const staffIdParam = String(url.searchParams.get("staff_id") || "").trim();
+    // SaaS multi-empresa (multi-staff): por enquanto usamos sempre o staff padrão da empresa.
+    // staff_id param é ignorado (Modelo #1).
     const durationMinutes = Math.max(5, Number(url.searchParams.get("duration") || 30));
     const stepMinutes = Math.max(5, Number(url.searchParams.get("step") || 15));
 
@@ -74,11 +74,37 @@ export async function GET(req: Request) {
 
     const userId = userRes.user.id;
 
-    // ✅ MODELO SOLO: ignorar staff e company. O "tenant" é o próprio user.
-    const ownerId = userId;
-    const timeZone = "Europe/Lisbon";
+    // ✅ MODELO SAAS: tenant = company_id (sempre)
+    const { data: prof, error: profErr } = await admin
+      .from("profiles")
+      .select("company_id")
+      .eq("id", userId)
+      .single();
 
-    // Business hours por dono (owner_working_hours)
+    if (profErr || !prof?.company_id) {
+      return NextResponse.json({ error: "Sem company no profile" }, { status: 400 });
+    }
+
+    const companyId = String(prof.company_id);
+
+    const { data: company, error: compErr } = await admin
+      .from("companies")
+      .select("timezone,default_staff_id")
+      .eq("id", companyId)
+      .single();
+
+    if (compErr || !company) {
+      return NextResponse.json({ error: "Company inválida" }, { status: 400 });
+    }
+
+    const staffId = String((company as any).default_staff_id || "");
+    if (!staffId) {
+      return NextResponse.json({ error: "Company sem default_staff_id" }, { status: 400 });
+    }
+
+    const timeZone = String((company as any).timezone || "Europe/Lisbon");
+
+    // Business hours por staff (staff_working_hours)
 // day range in UTC for query (00:00 - 24:00 local tz)
     const dayStartUtc = zonedDateTimeToUtc(date, "00:00", timeZone);
     const dayEndUtc = zonedDateTimeToUtc(date, "23:59", timeZone);
@@ -89,15 +115,18 @@ export async function GET(req: Request) {
     const map: any = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
     const dayOfWeek = map[dow] ?? 1;
 
+    // Nota: sua tabela staff_working_hours (criada no SQL) pode não ter coluna "active".
+    // Se não houver registro para o dia, usamos defaults (09:00-18:00).
     const { data: wh } = await admin
-      .from("owner_working_hours")
-      .select("start_time,end_time,active")
-      .eq("owner_id", ownerId)
+      .from("staff_working_hours")
+      .select("start_time,end_time")
+      .eq("company_id", companyId)
+      .eq("staff_id", staffId)
       .eq("day_of_week", dayOfWeek)
       .maybeSingle();
 
-    const open = wh?.active === false ? null : (wh?.start_time as string) || "09:00";
-    const close = wh?.active === false ? null : (wh?.end_time as string) || "18:00";
+    const open = (wh?.start_time as string) || "09:00";
+    const close = (wh?.end_time as string) || "18:00";
 
     if (!open || !close) {
       return NextResponse.json({ ok: true, date, timeZone, slots: [] });
@@ -107,7 +136,8 @@ export async function GET(req: Request) {
     const { data: appts, error: aErr } = await admin
       .from("appointments")
       .select("start_time,end_time,status,status_v2,service_duration_minutes_snapshot")
-      .eq("owner_id", ownerId)
+      .eq("company_id", companyId)
+      .eq("staff_id", staffId)
       .lt("start_time", dayEndUtc.toISOString())
       .gt("end_time", dayStartUtc.toISOString());
 

@@ -24,9 +24,7 @@ export async function POST(req: Request) {
     const appointmentId = String(body.appointmentId ?? body.appointment_id ?? "").trim();
     if (!appointmentId) return NextResponse.json({ error: "appointment_id obrigatório" }, { status: 400 });
 
-    const ownerId = userId;
-
-    // Mantemos company_id para mensagens (compatibilidade)
+    // Modelo SaaS: usa company_id sempre
     const { data: prof } = await admin.from("profiles").select("company_id").eq("id", userId).maybeSingle();
     const companyId = (prof as any)?.company_id as string | undefined;
     if (!companyId) return NextResponse.json({ error: "Sem company" }, { status: 400 });
@@ -36,7 +34,7 @@ export async function POST(req: Request) {
       .from("appointments")
       .update({ status: "CANCELLED", status_v2: "CANCELLED" })
       .eq("id", appointmentId)
-      .eq("owner_id", ownerId)
+      .eq("company_id", companyId)
       .select("id,customer_id,start_time")
       .single();
 
