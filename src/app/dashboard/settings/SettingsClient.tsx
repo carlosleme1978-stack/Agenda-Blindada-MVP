@@ -211,7 +211,7 @@ export default function SettingsClient() {
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "auto auto auto", gap: 30 }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 800 }}>Início</div>
                 <input style={{ ...input, marginTop: 6 }} value={workStart} onChange={(e) => setWorkStart(e.target.value)} placeholder="09:00" />
