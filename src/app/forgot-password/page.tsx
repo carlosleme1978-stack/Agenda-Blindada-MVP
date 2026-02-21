@@ -1,27 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { useState } from "react";
+import { supabaseBrowser } from "@/lib/supabase/browser";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState<string>("");
   const [loading, setLoading] = useState(false);
 
-  const supabase = useMemo(() => {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-    if (!url || !anon) {
-      // Mostra exatamente o que está faltando
-      console.error("ENV missing:", {
-        NEXT_PUBLIC_SUPABASE_URL: url ? "OK" : "MISSING",
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: anon ? "OK" : "MISSING",
-      });
-      return null;
-    }
-    return createClient(url, anon);
-  }, []);
+  const supabase = supabaseBrowser;
 
   const handleReset = async (e: React.FormEvent) => {
     e.preventDefault();

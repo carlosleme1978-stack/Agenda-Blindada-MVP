@@ -7,9 +7,21 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const __publicEnv = {
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+  };
+
   return (
     <html lang="pt-PT">
       <body style={{ margin: 0, minHeight: "100vh" }}>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.__AB_ENV = window.__AB_ENV || {};` +
+              `window.__AB_ENV.NEXT_PUBLIC_SUPABASE_URL=${JSON.stringify(__publicEnv.NEXT_PUBLIC_SUPABASE_URL)};` +
+              `window.__AB_ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY=${JSON.stringify(__publicEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY)};`,
+          }}
+        />
         <style>{`
           :root{color-scheme:dark;}
           html,body{height:100%;}

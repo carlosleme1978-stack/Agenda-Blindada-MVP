@@ -6,6 +6,7 @@ import { supabaseBrowser } from "@/lib/supabase/browser";
 import { ensureAccess, type Company } from "@/lib/access";
 import { useABTheme } from "@/app/ThemeProvider";
 
+
 const days = [
   { v: 1, label: "Seg" },
   { v: 2, label: "Ter" },

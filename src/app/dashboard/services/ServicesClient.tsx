@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { ensureAccess, type Company } from "@/lib/access";
 
+
 type CategoryRow = {
   id: string;
   name: string;

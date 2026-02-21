@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { supabaseBrowser } from "@/lib/supabase/browser";
+import { createBrowserSupabaseClient } from "@supabase/auth-helpers-nextjs";
+
+const supabaseBrowser = createBrowserSupabaseClient();
 
 function parseHashParams() {
   if (typeof window === "undefined") return new URLSearchParams();
