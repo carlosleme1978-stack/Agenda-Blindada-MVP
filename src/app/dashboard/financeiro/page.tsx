@@ -118,10 +118,16 @@ export default function FinanceiroPage() {
               // Se não existir / RLS, seguimos com snapshots no appointments (sem quebrar a página)
               break;
             }
-            (svc ?? []).forEach((r) => {
-              const row = r as unknown as SvcRow;
-              if (!svcByAppt[row.appointment_id]) svcByAppt[row.appointment_id] = [];
-              svcByAppt[row.appointment_id].push(row);
+
+            // Populate svcByAppt with fetched service snapshots
+            (svc ?? []).forEach((s: any) => {
+              const apptId = s.appointment_id;
+              if (!svcByAppt[apptId]) svcByAppt[apptId] = [];
+              svcByAppt[apptId].push({
+                appointment_id: apptId,
+                service_name_snapshot: s.service_name_snapshot,
+                price_cents_snapshot: s.price_cents_snapshot,
+              });
             });
           }
         }
