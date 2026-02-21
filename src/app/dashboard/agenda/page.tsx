@@ -243,14 +243,33 @@ export default function AgendaPage() {
         window.location.href = "/login";
         return;
       }
-      const ownerId = uid;
+      // Appointments are company-scoped. owner_id can be NULL (e.g. WhatsApp flow), so we filter by company_id.
+      const { data: profile, error: profileErr } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("id", uid)
+        .maybeSingle();
+
+      if (profileErr) {
+        console.error("Profile load error:", profileErr);
+        setErr("Não consegui carregar sua empresa.");
+        setLoading(false);
+        return;
+      }
+
+      const companyId = profile?.company_id;
+      if (!companyId) {
+        setErr("Sua empresa não está configurada.");
+        setLoading(false);
+        return;
+      }
 
       const { data, error } = await supabase
         .from("appointments")
         .select(
           "id,start_time,end_time,status,status_v2,customer_name_snapshot,customers(name,phone),service_name_snapshot,service_duration_minutes_snapshot,service_price_cents_snapshot,service_currency_snapshot"
         )
-        .eq("owner_id", ownerId)
+        .eq("company_id", companyId)
         .gte("start_time", range.from.toISOString())
         .lt("start_time", range.to.toISOString())
         .order("start_time", { ascending: true })
@@ -286,7 +305,7 @@ export default function AgendaPage() {
           console.warn("appointment_services load failed (fallback to snapshots):", error);
           setOpenServices([]);
         } else {
-          setOpenServices(((data ?? []) as any) ?? []);
+          setOpenServices((data ?? []) as any);
         }
       } catch (e) {
         console.warn("appointment_services load threw (fallback to snapshots):", e);

@@ -415,7 +415,6 @@ const candidates = [fromDigits, `+${fromDigits}`];
   // Tenta inserir inbound com wa_message_id; se já existe (unique), retorna e NÃO envia nada.
   if (waMessageId) {
     const ins = await db.from("message_log").insert({
-      company_id: resolvedCompanyId,
       direction: "inbound",
       customer_phone: fromDigits,
       body: textRaw,
@@ -433,7 +432,6 @@ const candidates = [fromDigits, `+${fromDigits}`];
   } else {
     // fallback (sem id)
     await db.from("message_log").insert({
-      company_id: resolvedCompanyId,
       direction: "inbound",
       customer_phone: fromDigits,
       body: textRaw,
@@ -479,15 +477,6 @@ const candidates = [fromDigits, `+${fromDigits}`];
   }
 
   const companyId = resolvedCompanyId;
-
-  // ✅ Staff padrão (obrigatório agora que staff_id é NOT NULL)
-  // Prioridade: ctx.staff_id -> companies.default_staff_id -> primeiro staff ativo
-  const { data: companyDefaultStaffRow } = await (db as any)
-    .from("companies")
-    .select("default_staff_id")
-    .eq("id", companyId)
-    .maybeSingle();
-  const defaultStaffId: string | null = (companyDefaultStaffRow as any)?.default_staff_id ?? null;
 
   // ✅ SOLO: garantir owner_id nas marcações criadas via WhatsApp
   // (a UI/availability/agenda usam owner_id para filtrar e bloquear horários)
@@ -1573,8 +1562,7 @@ if (state === "ASK_DAY") {
         service_duration_minutes_snapshot: Number(ctx?.duration_minutes) || null,
         service_price_cents_snapshot: Number(ctx?.price_cents_total ?? null) || null,
         service_currency_snapshot: "EUR",
-        // staff_id é NOT NULL no banco -> sempre definir
-        staff_id: ctx?.staff_id ?? defaultStaffId ?? (ACTIVE_STAFF?.[0]?.id ?? null),
+        staff_id: ctx?.staff_id ?? null,
       })
       .select("id")
       .single();

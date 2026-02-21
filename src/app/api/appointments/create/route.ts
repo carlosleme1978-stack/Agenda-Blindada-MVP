@@ -143,16 +143,16 @@ export async function POST(req: Request) {
     const { data: pickedServices, error: psErr } = await admin
       .from("services")
       // Seu schema atual de services: id, company_id, name, duration_minutes
-      .select("id,name,duration_minutes")
+      .select("id,name,duration_minutes,price_cents,currency")
       .in("id", finalServiceIds);
 
     if (psErr) return new NextResponse(psErr.message, { status: 400 });
     if (!pickedServices || pickedServices.length === 0) return new NextResponse("Service inválido.", { status: 400 });
 
-    const totalMinutes = pickedServices.reduce((a: number, s: any) => a + Number((s as any).duration_minutes ?? 0), 0) || durationMinutes || 30;
-    // Seu schema atual não tem preço/moeda no services, então usamos defaults.
-    const totalCents = 0;
-    const currency = "EUR";
+  const totalMinutes = pickedServices.reduce((a: number, s: any) => a + Number((s as any).duration_minutes ?? 0), 0) || durationMinutes || 30;
+  // Seu schema atual não tem preço/moeda no services, então usamos defaults.
+  const totalCents = pickedServices.reduce((a: number, s: any) => a + Number((s as any)?.price_cents ?? 0), 0);
+  const currency = String(((pickedServices[0] as any)?.currency ?? "EUR"));
 
     // Define end baseado na duração total do(s) serviço(s)
     const end = new Date(start.getTime() + totalMinutes * 60000);
@@ -226,12 +226,34 @@ export async function POST(req: Request) {
         const { sendWhatsAppTextForCompany } = await import("@/lib/whatsapp/company");
         const when = fmtLisbon(appt.start_time);
         const text =
-          `✅ Agendamento confirmado!\n` +
-          `👤 ${customerName}\n` +
-          `📅 ${when}\n\n` +
-          `Se precisar reagendar, responda esta mensagem.`;
+          `📌 *Pré-reserva criada!*
+` +
+          `👤 ${customerName}
+` +
+          `📅 ${when}
+
+` +
+          `Para confirmar, responda *SIM*.
+` +
+          `Para cancelar, responda *NÃO*.`;
 
         await sendWhatsAppTextForCompany(companyId, to, text);
+
+        // Put the customer into WAIT_CONFIRM so the WhatsApp webhook can handle SIM/NÃO
+        try {
+          await admin.from("chat_sessions").upsert(
+            {
+              company_id: companyId,
+              customer_id: custUp.id,
+              state: "WAIT_CONFIRM",
+              context: { pending_appointment_id: appt.id, mode: "NEW" },
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "company_id,customer_id" }
+          );
+        } catch {
+          // ignore
+        }
 
         // Log (se tabela existir)
         try {
